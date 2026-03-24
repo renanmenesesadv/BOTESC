@@ -33,6 +33,9 @@ services:
       DB_PORT: 5432
       POSTGRES_DB: n8n_docs
       BOT_API_PORT: 3000
+    volumes:
+      - ./config:/usr/src/config
+      - ./prompts:/usr/src/prompts
     depends_on:
       postgres:
         condition: service_healthy

@@ -32,7 +32,8 @@ module.exports = async function startPolling(pool, processUpdate) {
   while (true) {
     loopCount++;
     try {
-      const url = `${API}/getUpdates?offset=${offset}&timeout=10`;
+      const url = `${API}/getUpdates?offset=${offset}&timeout=10&allowed_updates=${encodeURIComponent(JSON.stringify(['message','callback_query']))}`;
+
       if (loopCount <= 3 || loopCount % 10 === 0) {
         console.log(`[POLL] Loop #${loopCount} - chamando getUpdates (offset=${offset})...`);
       }

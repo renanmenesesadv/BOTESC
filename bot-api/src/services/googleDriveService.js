@@ -50,13 +50,49 @@ async function createClientFolder(clientName) {
 }
 
 // ── Buscar ou criar pasta do cliente ─────────────────────
-async function getOrCreateClientFolder(clientName) {
-  const existing = await findClientFolder(clientName);
-  if (existing) {
-    console.log(`[+] Pasta existente encontrada: ${clientName}`);
-    return existing;
+async function getOrCreateClientFolder(clientName, existingId = null, parentId = null) {
+  const drive = getDrive();
+  const parent = parentId || ROOT_FOLDER_ID;
+
+  // Se já tem ID, verificar se existe
+  if (existingId) {
+    try {
+      const res = await drive.files.get({ fileId: existingId, fields: 'id, name, webViewLink' });
+      return res.data;
+    } catch (e) {} // pasta deletada, criar nova
   }
-  return await createClientFolder(clientName);
+
+  // Buscar por nome dentro do parent
+  const query = `name = '${clientName.replace(/'/g, "\\'")}' and '${parent}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+  const existing = await drive.files.list({ q: query, fields: 'files(id, name, webViewLink)' });
+  if (existing.data.files.length > 0) {
+    console.log(`[+] Pasta existente: ${clientName}`);
+    return existing.data.files[0];
+  }
+
+  // Criar nova
+  const res = await drive.files.create({
+    requestBody: { name: clientName, mimeType: 'application/vnd.google-apps.folder', parents: [parent] },
+    fields: 'id, name, webViewLink'
+  });
+  console.log(`[+] Pasta criada: ${clientName} em ${parent}`);
+  return res.data;
+}
+
+// ── Buscar subpasta dentro da pasta do usuário ──────────
+async function getSubfolderInUserFolder(userFolderId, subfolderName) {
+  const drive = getDrive();
+  const query = `name = '${subfolderName.replace(/'/g, "\\'")}' and '${userFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+  const res = await drive.files.list({ q: query, fields: 'files(id)' });
+  if (res.data.files.length > 0) return res.data.files[0].id;
+
+  // Criar se não existe
+  const created = await drive.files.create({
+    requestBody: { name: subfolderName, mimeType: 'application/vnd.google-apps.folder', parents: [userFolderId] },
+    fields: 'id'
+  });
+  console.log(`[+] Subpasta criada: ${subfolderName} em ${userFolderId}`);
+  return created.data.id;
 }
 
 // ── Contar arquivos na pasta (para numeração) ────────────
@@ -76,7 +112,7 @@ async function uploadFile(folderId, fileName, base64Data, mimeType) {
 
   const fileCount = await countFilesInFolder(folderId);
   const numero = fileCount + 1;
-  const numberedName = `${String(numero).padStart(3, '0')}_${fileName}`;
+  const numberedName = fileName;
 
   const buffer = Buffer.from(base64Data, 'base64');
   const stream = new Readable();
@@ -102,5 +138,6 @@ async function uploadFile(folderId, fileName, base64Data, mimeType) {
 module.exports = {
   getOrCreateClientFolder,
   uploadFile,
+  getSubfolderInUserFolder,
   getAuth
 };

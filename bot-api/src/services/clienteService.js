@@ -85,9 +85,19 @@ async function getNextFileNumber(pool, clienteId) {
   return res.rows[0].proximo;
 }
 
+// ── Listar últimos clientes (para botões de seleção) ────
+async function listClientes(pool, limit = 8) {
+  const res = await pool.query(
+    `SELECT id, nome, cpf FROM clientes ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT $1`,
+    [limit]
+  );
+  return res.rows;
+}
+
 module.exports = {
   findCliente,
   createCliente,
   updateCliente,
-  getNextFileNumber
+  getNextFileNumber,
+  listClientes
 };

@@ -1,0 +1,37 @@
+{
+  "users": {
+    "319858355": {
+      "nome": "Renan Meneses",
+      "drive_folder_id": "1YfeKS4fFVNoEVePHbtIYltvGk039xwpL"
+    }
+  },
+  "pending_registration": {
+    "Beatriz Ribeiro": "1nKnxv5Xpmwkv7uTRelIpWRZmg1Nk815Q",
+    "Joaquim Teixeira": "1svyzbx_B7ibCKdlMMWzxzHz2u0bX6oHS",
+    "Esther Alana": "1tbwxUkev2WwImGzlb2BQMGiYU9eHvr-6",
+    "Agatha Randria": "1gBXIyGTmFataAKYmnPMgG1CS1kgzA0gT",
+    "Guilherme Vale": "1b38mi0VM00xiOZmctY3R2do21BcIZfrX"
+  },
+  "subfolder_map": {
+    "Contrato": "Contratos",
+    "Procuração": "Procurações",
+    "RG": "Documentos Pessoais",
+    "CPF": "Documentos Pessoais",
+    "CNH": "Documentos Pessoais",
+    "Certidão": "Documentos Pessoais",
+    "Declaração": "Documentos Pessoais",
+    "Nota Fiscal": "Financeiro",
+    "Conta de Energia": "Financeiro",
+    "Conta de Água": "Financeiro",
+    "Laudo Médico": "Laudos e Atestados",
+    "Receita Médica": "Laudos e Atestados",
+    "Solicitação Médica": "Laudos e Atestados",
+    "Atestado": "Laudos e Atestados",
+    "Petição": "Processos",
+    "Intimação": "Processos",
+    "Sentença": "Processos",
+    "Alvará": "Processos",
+    "Recurso": "Processos"
+  },
+  "default_subfolder": "Correspondências"
+}
