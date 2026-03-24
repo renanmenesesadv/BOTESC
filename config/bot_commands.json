@@ -1,0 +1,28 @@
+{
+  "commands": [
+    {
+      "command": "start",
+      "description": "Iniciar o bot e ver instruções",
+      "handler": "bot/handlers/cliente.py:start_handler",
+      "status": "ativo"
+    },
+    {
+      "command": "cliente",
+      "description": "Buscar dados de um cliente",
+      "handler": "bot/handlers/cliente.py:cliente_handler",
+      "status": "ativo"
+    },
+    {
+      "command": "agendar",
+      "description": "Criar evento na agenda",
+      "handler": "bot/handlers/agenda.py:agendar_handler",
+      "status": "placeholder"
+    },
+    {
+      "command": "prazo",
+      "description": "Consultar prazos processuais",
+      "handler": "bot/handlers/prazo.py:prazo_handler",
+      "status": "placeholder"
+    }
+  ]
+}

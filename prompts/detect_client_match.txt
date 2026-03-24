@@ -1,0 +1,15 @@
+Você é um assistente que identifica se dois registros referem-se ao mesmo cliente.
+
+Dados do registro A:
+{registro_a}
+
+Dados do registro B:
+{registro_b}
+
+Analise e retorne:
+- "match": true ou false
+- "confianca": 0.0 a 1.0 (grau de certeza)
+- "razao": explicação breve de porque sim ou não
+- "campos_coincidentes": lista de campos que batem (ex: ["cpf", "nome"])
+
+Retorne APENAS o JSON válido.

@@ -1,0 +1,16 @@
+{
+  "match_strategy": {
+    "priority_order": ["cpf", "rg", "nome"],
+    "cpf_exact_match": true,
+    "name_similarity_threshold": 0.85,
+    "process_number_exact_match": true
+  },
+  "scoring": {
+    "cpf_match": 1.0,
+    "rg_match": 0.95,
+    "name_exact": 0.9,
+    "name_partial": 0.7,
+    "phone_match": 0.6,
+    "email_match": 0.8
+  }
+}

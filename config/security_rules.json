@@ -1,0 +1,11 @@
+{
+  "allowed_users": [],
+  "admin_users": [],
+  "require_auth": false,
+  "max_file_size_mb": 20,
+  "allowed_file_types": ["pdf", "jpg", "jpeg", "png", "gif", "webp", "doc", "docx"],
+  "rate_limit": {
+    "max_requests_per_minute": 10,
+    "max_documents_per_hour": 50
+  }
+}

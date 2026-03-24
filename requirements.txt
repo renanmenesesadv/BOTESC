@@ -1,0 +1,23 @@
+# Bot Telegram
+python-telegram-bot==21.7
+# IA
+anthropic==0.39.0
+google-genai==1.46.0
+openai==1.58.0
+# Google APIs
+google-auth==2.36.0
+google-auth-oauthlib==1.2.1
+google-api-python-client==2.155.0
+gspread==6.1.4
+# OCR
+pytesseract==0.3.13
+Pillow==11.0.0
+pymupdf==1.25.1
+# Browser automation
+playwright==1.49.0
+# Database
+psycopg2-binary==2.9.10
+# Utilities
+python-dotenv==1.0.1
+httpx==0.28.0
+pydantic==2.10.0
