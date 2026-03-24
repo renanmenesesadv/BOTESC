@@ -1,0 +1,216 @@
+{
+  "name": "Coleta de Documentos via WhatsApp (Evolution + Gemini)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp",
+        "options": {}
+      },
+      "id": "1-webhook",
+      "name": "Webhook Evolution API",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [0, 200],
+      "webhookId": "whatsapp-recebimento"
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.body.event }}",
+        "rules": {
+          "rules": [
+            {
+              "operation": "equal",
+              "value2": "messages.upsert",
+              "outputKey": "Nova Mensagem"
+            }
+          ]
+        },
+        "fallbackOutput": 1
+      },
+      "id": "2-filtro-evento",
+      "name": "Filtro: Apenas Mensagens",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [220, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.body.data.messageType }}",
+              "operation": "contains",
+              "value2": "document"
+            },
+            {
+              "value1": "={{ $json.body.data.messageType }}",
+              "operation": "contains",
+              "value2": "image"
+            }
+          ]
+        },
+        "combineOperation": "any"
+      },
+      "id": "3-filtro-tipo",
+      "name": "Filtro: É Documento/Imagem?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [440, 180]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.EVOLUTION_SERVER_URL }}/chat/getBase64FromMediaMessage/docs-bot",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.EVOLUTION_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "message",
+              "value": "={{ $json.body.data.message }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4-download",
+      "name": "Download Mídia (Evolution)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 160]
+    },
+    {
+      "parameters": {
+        "mode": "binary",
+        "propertyName": "data",
+        "sourceProperty": "={{ $json.base64 }}",
+        "options": {
+          "mimeType": "={{ $json.mimetype }}",
+          "fileName": "={{ $json.fileName || 'documento' }}"
+        }
+      },
+      "id": "convert-to-binary",
+      "name": "Converter para Binário",
+      "type": "n8n-nodes-base.moveBinaryData",
+      "typeVersion": 1,
+      "position": [880, 160]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "model": "gemini-2.5-flash",
+        "prompt": "Você é um assistente jurídico de triagem. Analise este documento e extraia os dados em JSON estruturado com as chaves exatas: \"tipo_documento\" (ex: Nota Fiscal, Contrato, RG), \"data_documento\" (YYYY-MM-DD), \"descricao\" (breve resumo 1 linha), \"nome_sugerido\" (ex: 2026-03-10_Contrato_ClienteX). Retorne APENAS o JSON válido sem markdown.",
+        "options": {
+          "systemInstruction": "Retorne apenas um JSON plano."
+        }
+      },
+      "id": "5-gemini",
+      "name": "Gemini 2.5 Flash Extração",
+      "type": "n8n-nodes-base.googleGemini",
+      "typeVersion": 1,
+      "position": [1100, 160]
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "fileContent": "data",
+        "name": "={{ JSON.parse($json.message.content).nome_sugerido }}",
+        "parents": [
+          "ID_DA_PASTA_NO_DRIVE"
+        ],
+        "options": {}
+      },
+      "id": "6-drive",
+      "name": "Salvar Google Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 2,
+      "position": [1320, 160]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "documentos",
+        "columns": "remetente_numero, remetente_nome, nome_arquivo_original, nome_arquivo_salvo, tipo_documento, descricao_gemini, link_drive, status",
+        "dataMode": "defineObect",
+        "values": {
+          "values": [
+            { "column": "remetente_numero", "value": "={{ $('Filtro: É Documento/Imagem?').item.json.body.data.key.remoteJid }}" },
+            { "column": "remetente_nome", "value": "={{ $('Filtro: É Documento/Imagem?').item.json.body.data.pushName }}" },
+            { "column": "nome_arquivo_salvo", "value": "={{ JSON.parse($('Gemini 2.5 Flash Extração').item.json.message.content).nome_sugerido }}" },
+            { "column": "tipo_documento", "value": "={{ JSON.parse($('Gemini 2.5 Flash Extração').item.json.message.content).tipo_documento }}" },
+            { "column": "descricao_gemini", "value": "={{ JSON.parse($('Gemini 2.5 Flash Extração').item.json.message.content).descricao }}" },
+            { "column": "link_drive", "value": "={{ $json.webViewLink }}" },
+            { "column": "status", "value": "processado" }
+          ]
+        }
+      },
+      "id": "7-postgres",
+      "name": "Inserir no PostgreSQL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.1,
+      "position": [1540, 160]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.EVOLUTION_SERVER_URL }}/message/sendText/docs-bot",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.EVOLUTION_API_KEY }}" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "number", "value": "={{ $('Filtro: É Documento/Imagem?').item.json.body.data.key.remoteJid.replace('@s.whatsapp.net', '') }}" },
+            { "name": "text", "value": "={{ '✅ Documento recebido e arquivado!\\n\\n📁 Tipo: ' + JSON.parse($('Gemini 2.5 Flash Extração').item.json.message.content).tipo_documento + '\\n🗂 Descrição: ' + JSON.parse($('Gemini 2.5 Flash Extração').item.json.message.content).descricao + '\\n🔗 Ver no Drive: ' + $('Salvar Google Drive').item.json.webViewLink }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8-confirmacao",
+      "name": "Enviar Confirmação WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1760, 160]
+    }
+  ],
+  "connections": {
+    "Webhook Evolution API": {
+      "main": [ [ { "node": "Filtro: Apenas Mensagens", "type": "main", "index": 0 } ] ]
+    },
+    "Filtro: Apenas Mensagens": {
+      "main": [ [ { "node": "Filtro: É Documento/Imagem?", "type": "main", "index": 0 } ] ]
+    },
+    "Filtro: É Documento/Imagem?": {
+      "main": [ [ { "node": "Download Mídia (Evolution)", "type": "main", "index": 0 } ] ]
+    },
+    "Download Mídia (Evolution)": {
+      "main": [ [ { "node": "Converter para Binário", "type": "main", "index": 0 } ] ]
+    },
+    "Convert to Binary": {
+      "main": [ [ { "node": "Gemini 2.5 Flash Extração", "type": "main", "index": 0 } ] ]
+    },
+    "Gemini 2.5 Flash Extração": {
+      "main": [ [ { "node": "Salvar Google Drive", "type": "main", "index": 0 } ] ]
+    },
+    "Salvar Google Drive": {
+      "main": [ [ { "node": "Inserir no PostgreSQL", "type": "main", "index": 0 } ] ]
+    },
+    "Inserir no PostgreSQL": {
+      "main": [ [ { "node": "Enviar Confirmação WhatsApp", "type": "main", "index": 0 } ] ]
+    }
+  }
+}

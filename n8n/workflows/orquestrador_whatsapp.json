@@ -1,0 +1,62 @@
+{
+  "name": "Orquestrador WhatsApp (n8n → Bot API)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp",
+        "options": {}
+      },
+      "id": "1-webhook-evolution",
+      "name": "Webhook Evolution API",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ],
+      "webhookId": "whatsapp-recebimento"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://bot-api:3000/whatsapp/process-message",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "event",
+              "value": "={{ $json.body.event }}"
+            },
+            {
+              "name": "data",
+              "value": "={{ $json.body.data }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2-http-bot-api",
+      "name": "Enviar para Bot API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        460,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Evolution API": {
+      "main": [
+        [
+          {
+            "node": "Enviar para Bot API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
