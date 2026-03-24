@@ -9,7 +9,6 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from bot.handlers.cliente import start_handler, cliente_handler
 from bot.handlers.documento import documento_handler, photo_handler
 from bot.handlers.agenda import agendar_handler
-from bot.handlers.prazo import prazo_handler
 
 load_dotenv()
 logging.basicConfig(
@@ -30,7 +29,6 @@ def main():
     app.add_handler(CommandHandler("start", start_handler))
     app.add_handler(CommandHandler("cliente", cliente_handler))
     app.add_handler(CommandHandler("agendar", agendar_handler))
-    app.add_handler(CommandHandler("prazo", prazo_handler))
 
     # ── Documentos (fotos e arquivos) ────────────────────
     app.add_handler(MessageHandler(filters.Document.ALL, documento_handler))
@@ -48,8 +46,7 @@ async def fallback_text(update, context):
         "📎 Envie um *documento* (foto ou PDF) para que eu possa processá-lo.\n\n"
         "Ou use um comando:\n"
         "/cliente — Buscar cliente\n"
-        "/agendar — Criar evento na agenda\n"
-        "/prazo — Consultar prazos",
+        "/agendar — Criar evento na agenda",
         parse_mode="Markdown",
     )
 

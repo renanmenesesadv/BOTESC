@@ -17,12 +17,6 @@
       "description": "Criar evento na agenda",
       "handler": "bot/handlers/agenda.py:agendar_handler",
       "status": "placeholder"
-    },
-    {
-      "command": "prazo",
-      "description": "Consultar prazos processuais",
-      "handler": "bot/handlers/prazo.py:prazo_handler",
-      "status": "placeholder"
     }
   ]
 }

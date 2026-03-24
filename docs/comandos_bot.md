@@ -5,7 +5,6 @@
 | `/start` | Ativo | Saudação e instruções |
 | `/cliente <nome>` | Ativo | Buscar cliente por nome |
 | `/agendar` | Placeholder | Criar evento no Calendar |
-| `/prazo` | Placeholder | Consultar prazos DJEN/PJe |
 
 ## Ações automáticas
 

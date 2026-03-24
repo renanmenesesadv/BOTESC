@@ -8,7 +8,7 @@ Sistema de automação jurídica com bot Telegram, classificação por IA e orga
 
 ### Camada 1 — Código (`bot/` e `workers/`)
 - `bot/` — Interface Telegram (handlers, keyboards, middlewares)
-- `workers/` — Scripts técnicos (IA, OCR, browser, Google APIs, matching)
+- `workers/` — Scripts técnicos (IA, OCR, Google APIs, matching)
 
 ### Camada 2 — Workflows (`n8n/`)
 - Workflows exportados como JSON, versionados no Git

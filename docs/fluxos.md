@@ -18,14 +18,7 @@
 2. Bot busca no PostgreSQL por nome
 3. Retorna dados + link do Drive
 
-## 3. (Futuro) Prazos
-
-1. Worker navega no DJEN/PJe via Playwright
-2. IA extrai prazos da publicação
-3. Bot notifica o advogado
-4. Cria evento no Calendar
-
-## 4. (Futuro) Agenda
+## 3. (Futuro) Agenda
 
 1. Usuário envia `/agendar 2026-04-01 14:00 Audiência`
 2. Worker cria evento no Google Calendar

@@ -13,8 +13,6 @@ gspread==6.1.4
 pytesseract==0.3.13
 Pillow==11.0.0
 pymupdf==1.25.1
-# Browser automation
-playwright==1.49.0
 # Database
 psycopg2-binary==2.9.10
 # Utilities
