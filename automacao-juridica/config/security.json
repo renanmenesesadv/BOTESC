@@ -1,0 +1,128 @@
+{
+  "descricao": "Modelo de segurança do sistema de automação jurídica",
+  "camadas": {
+    "1_ativacao": {
+      "descricao": "Chave de ativação do sistema. Sem ela, nenhum workflow roda.",
+      "chave_env": "SYSTEM_ACTIVATION_KEY",
+      "formato": "UUID v4 gerado pelo admin",
+      "onde_validar": "Primeiro node de cada workflow no n8n",
+      "comportamento_sem_chave": "Todos os workflows param silenciosamente e registram log"
+    },
+    "2_whitelist_telegram": {
+      "descricao": "Apenas Telegram IDs cadastrados na aba USUARIOS podem usar o bot",
+      "fonte": "Google Sheets → aba USUARIOS → coluna TELEGRAM_ID onde ATIVO = TRUE",
+      "comportamento_nao_autorizado": {
+        "resposta": "🔒 Acesso não autorizado.\n\nSeu ID: {user_id}\nEntre em contato com o administrador.",
+        "log": "login_tentativa com resultado 'falha'",
+        "alerta_admin": true
+      }
+    },
+    "3_roles": {
+      "descricao": "Cada usuário tem um papel que define o que pode fazer",
+      "papeis": {
+        "admin": {
+          "descricao": "Controle total do sistema",
+          "permissoes": [
+            "cadastrar_cliente",
+            "classificar_documento",
+            "agendar_evento",
+            "consultar_prazo",
+            "buscar_cliente",
+            "ver_status",
+            "gerenciar_usuarios",
+            "ver_logs",
+            "configurar_sistema"
+          ],
+          "comandos": ["/cliente", "/documento", "/agendar", "/prazo", "/buscar", "/status", "/ajuda"],
+          "recebe_alertas": ["critica", "alta", "media", "baixa", "erro_sistema", "login_nao_autorizado"],
+          "max_usuarios": 2
+        },
+        "advogado": {
+          "descricao": "Operação diária do escritório",
+          "permissoes": [
+            "cadastrar_cliente",
+            "classificar_documento",
+            "agendar_evento",
+            "consultar_prazo",
+            "buscar_cliente"
+          ],
+          "comandos": ["/cliente", "/documento", "/agendar", "/prazo", "/buscar", "/ajuda"],
+          "recebe_alertas": ["critica", "alta"],
+          "max_usuarios": 10
+        },
+        "estagiario": {
+          "descricao": "Operações limitadas, sem acesso a dados sensíveis",
+          "permissoes": [
+            "classificar_documento",
+            "consultar_prazo"
+          ],
+          "comandos": ["/documento", "/prazo", "/ajuda"],
+          "recebe_alertas": [],
+          "max_usuarios": 5
+        }
+      }
+    },
+    "4_validacao_dados": {
+      "descricao": "Validações aplicadas em todo dado que entra no sistema",
+      "regras": {
+        "cpf": {
+          "formato": "000.000.000-00",
+          "validacao": "11 dígitos + algoritmo de verificação",
+          "onde": "WF-02 (cadastro) e classify.py (extração)"
+        },
+        "numero_processo": {
+          "formato": "0000000-00.0000.0.00.0000",
+          "validacao": "Padrão CNJ com 20 dígitos",
+          "onde": "classify.py e extract_deadline.py"
+        },
+        "telegram_id": {
+          "validacao": "Apenas números, mínimo 6 dígitos",
+          "onde": "Primeiro node de cada workflow"
+        },
+        "arquivo": {
+          "tipos_permitidos": [".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".bmp"],
+          "tamanho_maximo_mb": 20,
+          "onde": "WF-01 antes do OCR"
+        }
+      }
+    },
+    "5_api_keys": {
+      "descricao": "Chaves de API nunca ficam no código. Sempre via variáveis de ambiente.",
+      "regras": {
+        "armazenamento": "Variáveis de ambiente no servidor n8n",
+        "nunca_em": ["código fonte", "Git", "Google Sheets", "logs", "mensagens Telegram"],
+        "rotacao": "A cada 90 dias ou imediatamente se comprometida"
+      },
+      "variaveis": {
+        "ANTHROPIC_API_KEY": "API do Claude (classificação e extração)",
+        "OPENAI_API_KEY": "API do GPT Vision (fallback OCR)",
+        "TELEGRAM_BOT_TOKEN": "Token do bot do Telegram",
+        "GOOGLE_CREDENTIALS_PATH": "Caminho para credentials.json do Google",
+        "SYSTEM_ACTIVATION_KEY": "Chave mestra de ativação do sistema"
+      }
+    },
+    "6_auditoria": {
+      "descricao": "Toda ação é registrada e rastreável",
+      "o_que_registrar": {
+        "sempre": [
+          "Quem fez (Telegram ID)",
+          "O que fez (ação)",
+          "Quando fez (timestamp ISO)",
+          "Resultado (sucesso/falha)",
+          "Detalhes (JSON)"
+        ],
+        "seguranca": [
+          "Tentativas de acesso não autorizado",
+          "Falhas de validação",
+          "Erros de sistema",
+          "Alterações de usuários"
+        ]
+      },
+      "retencao": {
+        "logs_operacionais": "90 dias no Sheets, depois exporta para Drive",
+        "logs_seguranca": "365 dias mínimo, nunca deletar automaticamente",
+        "dados_clientes": "5 anos após arquivamento (requisito legal)"
+      }
+    }
+  }
+}

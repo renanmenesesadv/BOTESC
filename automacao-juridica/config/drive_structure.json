@@ -1,0 +1,117 @@
+{
+  "descricao": "Estrutura de pastas do Google Drive para o escritório",
+  "pasta_raiz": {
+    "nome": "ESCRITÓRIO JURÍDICO",
+    "id_env": "DRIVE_ROOT_FOLDER_ID",
+    "subpastas_fixas": {
+      "00 - SISTEMA": {
+        "descricao": "Arquivos do sistema, templates, backups",
+        "subpastas": {
+          "Templates": "Modelos de petição, contrato, procuração",
+          "Backups": "Exportações periódicas do Sheets",
+          "Logs": "Logs exportados mensalmente"
+        },
+        "acesso": "admin"
+      },
+      "01 - CLIENTES ATIVOS": {
+        "descricao": "Pasta de cada cliente ativo",
+        "template_cliente": {
+          "nome_pasta": "{NOME_COMPLETO} - {CPF}",
+          "exemplo": "Maria da Silva Santos - 123.456.789-00",
+          "subpastas": {
+            "00 - Entrada": {
+              "descricao": "Documentos recém-recebidos, não classificados ou com confiança baixa",
+              "quando_usar": "Documento com confiança < 0.7 OU tipo 'outro' OU cliente ambíguo",
+              "acao_posterior": "Advogado revisa e move manualmente, ou reclassifica via bot"
+            },
+            "01 - Protocolo": {
+              "descricao": "Documentos processuais principais",
+              "tipos": [
+                "peticao_inicial",
+                "contestacao",
+                "sentenca",
+                "acordao",
+                "notificacao",
+                "oficio"
+              ],
+              "quando_usar": "Peças processuais, decisões judiciais, comunicações oficiais"
+            },
+            "02 - Medicos": {
+              "descricao": "Documentação médica e de saúde",
+              "tipos": [
+                "laudo_medico"
+              ],
+              "quando_usar": "Laudos, atestados, exames, relatórios médicos, CID, perícias médicas"
+            },
+            "03 - Processual": {
+              "descricao": "Documentos de apoio processual",
+              "tipos": [
+                "procuracao",
+                "certidao"
+              ],
+              "quando_usar": "Procurações, substabelecimentos, certidões, documentos de habilitação"
+            },
+            "04 - Contratos": {
+              "descricao": "Contratos e comprovantes financeiros",
+              "tipos": [
+                "contrato",
+                "comprovante"
+              ],
+              "quando_usar": "Contratos de honorários, comprovantes de renda, residência, pagamento"
+            }
+          }
+        },
+        "acesso": "admin, advogado"
+      },
+      "02 - CLIENTES INATIVOS": {
+        "descricao": "Clientes com processos encerrados. Pasta movida automaticamente quando status muda para 'inativo'",
+        "acesso": "admin"
+      },
+      "03 - CLIENTES ARQUIVADOS": {
+        "descricao": "Clientes arquivados (retenção mínima 5 anos). Pasta movida quando status muda para 'arquivado'",
+        "acesso": "admin"
+      }
+    }
+  },
+  "regras_de_nomenclatura": {
+    "pasta_cliente": "{NOME_COMPLETO} - {CPF}",
+    "arquivo_documento": "{TIPO}_{NOME_CLIENTE}_{DATA}.{EXT}",
+    "exemplos": [
+      "laudo_medico_Maria_da_Silva_2026-03-24.pdf",
+      "peticao_inicial_Joao_Oliveira_2026-03-20.pdf",
+      "contrato_Ana_Lima_2026-01-15.pdf"
+    ]
+  },
+  "mapa_tipo_para_pasta": {
+    "peticao_inicial": "01 - Protocolo",
+    "contestacao": "01 - Protocolo",
+    "sentenca": "01 - Protocolo",
+    "acordao": "01 - Protocolo",
+    "notificacao": "01 - Protocolo",
+    "oficio": "01 - Protocolo",
+    "laudo_medico": "02 - Medicos",
+    "procuracao": "03 - Processual",
+    "certidao": "03 - Processual",
+    "contrato": "04 - Contratos",
+    "comprovante": "04 - Contratos",
+    "outro": "00 - Entrada"
+  },
+  "regras_automaticas": {
+    "confianca_alta": {
+      "condicao": "confianca >= 0.7 E match forte",
+      "acao": "Upload direto na pasta correta"
+    },
+    "confianca_baixa": {
+      "condicao": "confianca < 0.7 OU match ambíguo",
+      "acao": "Upload em 00 - Entrada + notificar advogado para revisão"
+    },
+    "sem_cliente": {
+      "condicao": "match nao_encontrado",
+      "acao": "Upload em 00 - SISTEMA/Entrada_Sem_Cliente + notificar admin"
+    },
+    "cliente_inativado": {
+      "condicao": "status do cliente muda para 'inativo'",
+      "acao": "Mover pasta inteira de 01 - CLIENTES ATIVOS para 02 - CLIENTES INATIVOS"
+    }
+  }
+}

@@ -1,0 +1,180 @@
+{
+  "name": "WF-02: Cadastrar Cliente",
+  "nodes": [
+    {
+      "id": "node-01",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "position": [0, 0],
+      "parameters": {
+        "updates": ["message"]
+      },
+      "notas": "Filtra mensagens que começam com /cliente"
+    },
+    {
+      "id": "node-02",
+      "name": "Validar Comando",
+      "type": "n8n-nodes-base.if",
+      "position": [220, 0],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.message.text }}",
+              "operation": "startsWith",
+              "value2": "/cliente"
+            }
+          ]
+        }
+      },
+      "notas": "Só processa se for comando /cliente"
+    },
+    {
+      "id": "node-03",
+      "name": "Pedir Dados",
+      "type": "n8n-nodes-base.telegram",
+      "position": [440, 0],
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "={{ $json.message.chat.id }}",
+        "text": "📝 *Cadastro de Cliente*\n\nEnvie os dados no formato:\n\n`Nome Completo\nCPF\nTelefone\nEmail`\n\nExemplo:\n`Maria da Silva Santos\n123.456.789-00\n(85) 99999-0000\nmaria@email.com`",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "notas": "Solicita dados do cliente em formato estruturado."
+    },
+    {
+      "id": "node-04",
+      "name": "Aguardar Resposta",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "position": [660, 0],
+      "parameters": {
+        "updates": ["message"]
+      },
+      "notas": "Aguarda próxima mensagem do mesmo chat com os dados."
+    },
+    {
+      "id": "node-05",
+      "name": "Parsear Dados",
+      "type": "n8n-nodes-base.code",
+      "position": [880, 0],
+      "parameters": {
+        "jsCode": "const texto = $input.first().json.message.text;\nconst linhas = texto.split('\\n').map(l => l.trim()).filter(l => l);\n\nconst cliente = {\n  id: 'cli-' + Date.now(),\n  nome_completo: linhas[0] || '',\n  cpf: linhas[1] || '',\n  telefone: linhas[2] || '',\n  email: linhas[3] || '',\n  status: 'ativo',\n  data_cadastro: new Date().toISOString(),\n  cadastrado_por: $input.first().json.message.from.id.toString()\n};\n\n// Validação básica do CPF\nconst cpfLimpo = cliente.cpf.replace(/[^0-9]/g, '');\ncliente.cpf_valido = cpfLimpo.length === 11;\n\nreturn [{json: cliente}];"
+      },
+      "notas": "Parseia os dados enviados pelo usuário linha por linha."
+    },
+    {
+      "id": "node-06",
+      "name": "CPF Válido?",
+      "type": "n8n-nodes-base.if",
+      "position": [1100, 0],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.cpf_valido }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "notas": "Valida se CPF tem 11 dígitos."
+    },
+    {
+      "id": "node-07",
+      "name": "Criar Pasta Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "position": [1320, 0],
+      "parameters": {
+        "operation": "createFolder",
+        "name": "={{ $json.nome_completo + ' - ' + $json.cpf }}",
+        "parent": "={{ $env.DRIVE_ROOT_FOLDER_ID }}"
+      },
+      "notas": "Cria pasta raiz do cliente: 'Nome Completo - CPF'"
+    },
+    {
+      "id": "node-08",
+      "name": "Criar Subpastas",
+      "type": "n8n-nodes-base.code",
+      "position": [1540, 0],
+      "parameters": {
+        "jsCode": "const pastas = [\n  '00 - Entrada',\n  '01 - Protocolo',\n  '02 - Medicos',\n  '03 - Processual',\n  '04 - Contratos'\n];\n\nreturn pastas.map(p => ({json: {nome_pasta: p, parent_id: $input.first().json.id}}));"
+      },
+      "notas": "Gera itens para criar as 5 subpastas."
+    },
+    {
+      "id": "node-09",
+      "name": "Loop Criar Subpastas",
+      "type": "n8n-nodes-base.googleDrive",
+      "position": [1760, 0],
+      "parameters": {
+        "operation": "createFolder",
+        "name": "={{ $json.nome_pasta }}",
+        "parent": "={{ $json.parent_id }}"
+      },
+      "notas": "Cria cada subpasta dentro da pasta do cliente."
+    },
+    {
+      "id": "node-10",
+      "name": "Registrar no Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [1980, 0],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "sheetName": "CLIENTES",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ID": "={{ $json.id }}",
+            "NOME": "={{ $json.nome_completo }}",
+            "CPF": "={{ $json.cpf }}",
+            "TELEFONE": "={{ $json.telefone }}",
+            "EMAIL": "={{ $json.email }}",
+            "PASTA_DRIVE_ID": "={{ $json.pasta_drive_id }}",
+            "STATUS": "ativo",
+            "DATA_CADASTRO": "={{ $now.format('dd/MM/yyyy HH:mm') }}",
+            "CADASTRADO_POR": "={{ $json.cadastrado_por }}"
+          }
+        }
+      },
+      "notas": "Registra cliente na aba CLIENTES."
+    },
+    {
+      "id": "node-11",
+      "name": "Confirmar Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "position": [2200, 0],
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "={{ $json.message.chat.id }}",
+        "text": "={{ '✅ Cliente cadastrado!\\n\\n👤 ' + $json.nome_completo + '\\n📄 CPF: ' + $json.cpf + '\\n📁 Pasta criada no Drive\\n\\nAgora você pode enviar documentos deste cliente.' }}"
+      },
+      "notas": "Confirma cadastro com resumo."
+    },
+    {
+      "id": "node-12",
+      "name": "Erro CPF",
+      "type": "n8n-nodes-base.telegram",
+      "position": [1320, 150],
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "={{ $json.message.chat.id }}",
+        "text": "❌ CPF inválido. Envie no formato: 000.000.000-00\n\nUse /cliente para tentar novamente."
+      },
+      "notas": "Avisa sobre CPF inválido."
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {"main": [["Validar Comando"]]},
+    "Validar Comando": {"main": [["Pedir Dados"]]},
+    "Pedir Dados": {"main": [["Aguardar Resposta"]]},
+    "Aguardar Resposta": {"main": [["Parsear Dados"]]},
+    "Parsear Dados": {"main": [["CPF Válido?"]]},
+    "CPF Válido?": {"main": [["Criar Pasta Drive"], ["Erro CPF"]]},
+    "Criar Pasta Drive": {"main": [["Criar Subpastas"]]},
+    "Criar Subpastas": {"main": [["Loop Criar Subpastas"]]},
+    "Loop Criar Subpastas": {"main": [["Registrar no Sheets"]]},
+    "Registrar no Sheets": {"main": [["Confirmar Telegram"]]}
+  }
+}

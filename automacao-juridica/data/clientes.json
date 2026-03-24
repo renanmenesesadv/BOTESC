@@ -1,0 +1,23 @@
+[
+  {
+    "id": "cli-001",
+    "nome_completo": "Maria da Silva Santos",
+    "cpf": "123.456.789-00",
+    "processos": ["0001234-56.2025.4.05.8100"],
+    "status": "ativo"
+  },
+  {
+    "id": "cli-002",
+    "nome_completo": "João Pedro de Oliveira",
+    "cpf": "987.654.321-00",
+    "processos": ["0005678-90.2024.4.05.8100", "0009999-11.2025.5.07.0001"],
+    "status": "ativo"
+  },
+  {
+    "id": "cli-003",
+    "nome_completo": "Ana Carolina Ferreira Lima",
+    "cpf": "111.222.333-44",
+    "processos": [],
+    "status": "ativo"
+  }
+]

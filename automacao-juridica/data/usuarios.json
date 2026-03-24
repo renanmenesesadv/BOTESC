@@ -1,0 +1,26 @@
+[
+  {
+    "TELEGRAM_ID": "123456789",
+    "NOME": "Dr. João Pereira",
+    "ROLE": "admin",
+    "ATIVO": "TRUE",
+    "DATA_CADASTRO": "2026-03-24",
+    "ULTIMO_ACESSO": ""
+  },
+  {
+    "TELEGRAM_ID": "987654321",
+    "NOME": "Dra. Ana Costa",
+    "ROLE": "advogado",
+    "ATIVO": "TRUE",
+    "DATA_CADASTRO": "2026-03-24",
+    "ULTIMO_ACESSO": ""
+  },
+  {
+    "TELEGRAM_ID": "555666777",
+    "NOME": "Pedro Estagiário",
+    "ROLE": "estagiario",
+    "ATIVO": "TRUE",
+    "DATA_CADASTRO": "2026-03-24",
+    "ULTIMO_ACESSO": ""
+  }
+]

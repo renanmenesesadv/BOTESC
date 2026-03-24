@@ -1,0 +1,265 @@
+{
+  "name": "WF-01: Receber e Classificar Documento",
+  "nodes": [
+    {
+      "id": "node-01",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "position": [0, 0],
+      "parameters": {
+        "updates": ["message"],
+        "additionalFields": {}
+      },
+      "notas": "Dispara quando recebe qualquer mensagem com arquivo (foto, documento PDF)"
+    },
+    {
+      "id": "node-02",
+      "name": "Validar Usuário",
+      "type": "n8n-nodes-base.if",
+      "position": [220, 0],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.message.from.id }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "notas": "Verifica se o Telegram ID está na whitelist. Conectar com Google Sheets aba USUARIOS ou lista fixa."
+    },
+    {
+      "id": "node-03",
+      "name": "Baixar Arquivo",
+      "type": "n8n-nodes-base.telegram",
+      "position": [440, 0],
+      "parameters": {
+        "operation": "getFile",
+        "fileId": "={{ $json.message.document.file_id || $json.message.photo[-1].file_id }}"
+      },
+      "notas": "Baixa o arquivo enviado pelo usuário. Suporta documento (PDF) e foto (imagem)."
+    },
+    {
+      "id": "node-04",
+      "name": "Salvar em Temp",
+      "type": "n8n-nodes-base.writeBinaryFile",
+      "position": [660, 0],
+      "parameters": {
+        "fileName": "={{ $env.PROJECT_PATH }}/data/temp/{{ $json.message.document.file_name || 'foto_' + Date.now() + '.jpg' }}"
+      },
+      "notas": "Salva arquivo em data/temp/ para processamento."
+    },
+    {
+      "id": "node-05",
+      "name": "OCR pytesseract",
+      "type": "n8n-nodes-base.executeCommand",
+      "position": [880, 0],
+      "parameters": {
+        "command": "cd {{ $env.PROJECT_PATH }} && python workers/ocr/reader.py \"data/temp/{{ $json.fileName }}\""
+      },
+      "notas": "Executa OCR local. Retorna JSON com campo precisa_fallback."
+    },
+    {
+      "id": "node-06",
+      "name": "Precisa Fallback?",
+      "type": "n8n-nodes-base.if",
+      "position": [1100, 0],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ JSON.parse($json.stdout).precisa_fallback }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "notas": "Se precisa_fallback == true, vai para GPT Vision. Senão, segue direto para Claude."
+    },
+    {
+      "id": "node-07",
+      "name": "GPT Vision Fallback",
+      "type": "n8n-nodes-base.executeCommand",
+      "position": [1320, 100],
+      "parameters": {
+        "command": "cd {{ $env.PROJECT_PATH }} && python workers/ocr/vision_fallback.py \"data/temp/{{ $json.fileName }}\""
+      },
+      "notas": "Fallback: envia imagem para GPT Vision quando OCR local falha."
+    },
+    {
+      "id": "node-08",
+      "name": "Merge Texto",
+      "type": "n8n-nodes-base.merge",
+      "position": [1540, 0],
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "notas": "Recebe texto do OCR (rota direta) ou do GPT Vision (rota fallback). Unifica em um só fluxo."
+    },
+    {
+      "id": "node-09",
+      "name": "Classificar com Claude",
+      "type": "n8n-nodes-base.executeCommand",
+      "position": [1760, 0],
+      "parameters": {
+        "command": "cd {{ $env.PROJECT_PATH }} && python workers/n8n/classify.py \"{{ JSON.parse($json.stdout).texto }}\""
+      },
+      "notas": "Envia texto extraído para Claude Haiku. Retorna tipo_documento, nome_cliente, cpf, categoria_pasta."
+    },
+    {
+      "id": "node-10",
+      "name": "Match Cliente",
+      "type": "n8n-nodes-base.executeCommand",
+      "position": [1980, 0],
+      "parameters": {
+        "command": "cd {{ $env.PROJECT_PATH }} && python workers/n8n/client_match.py '{{ JSON.stringify({nome_cliente: $json.classificacao.nome_cliente, cpf: $json.classificacao.cpf, numero_processo: $json.classificacao.numero_processo}) }}'"
+      },
+      "notas": "Cruza dados extraídos com base de clientes. Retorna match forte/provavel/ambiguo/nao_encontrado."
+    },
+    {
+      "id": "node-11",
+      "name": "Switch Match",
+      "type": "n8n-nodes-base.switch",
+      "position": [2200, 0],
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ JSON.parse($json.stdout).match }}",
+        "rules": {
+          "rules": [
+            {"value": "forte", "output": 0},
+            {"value": "provavel", "output": 1},
+            {"value": "ambiguo", "output": 2},
+            {"value": "nao_encontrado", "output": 3}
+          ]
+        }
+      },
+      "notas": "Direciona fluxo baseado no resultado do match."
+    },
+    {
+      "id": "node-12",
+      "name": "Upload Google Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "position": [2420, -100],
+      "parameters": {
+        "operation": "upload",
+        "folderId": "={{ $json.cliente.pasta_drive_id }}/{{ $json.classificacao.categoria_pasta }}",
+        "name": "={{ $json.arquivo }}"
+      },
+      "notas": "Faz upload do arquivo para a pasta correta do cliente no Drive. Rota: match forte ou provavel confirmado."
+    },
+    {
+      "id": "node-13",
+      "name": "Registrar no Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [2640, -100],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "sheetName": "DOCUMENTOS",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ID": "={{ $json.documento_id }}",
+            "DATA": "={{ $now.format('dd/MM/yyyy HH:mm') }}",
+            "CLIENTE": "={{ $json.cliente.nome }}",
+            "CPF": "={{ $json.cliente.cpf }}",
+            "TIPO": "={{ $json.classificacao.tipo_documento }}",
+            "PASTA": "={{ $json.classificacao.categoria_pasta }}",
+            "CONFIANCA": "={{ $json.classificacao.confianca }}",
+            "METODO_OCR": "={{ $json.metodo }}",
+            "ARQUIVO": "={{ $json.arquivo }}",
+            "ENVIADO_POR": "={{ $json.telegram_user_id }}"
+          }
+        }
+      },
+      "notas": "Registra documento na aba DOCUMENTOS do Google Sheets."
+    },
+    {
+      "id": "node-14",
+      "name": "Responder Telegram OK",
+      "type": "n8n-nodes-base.telegram",
+      "position": [2860, -100],
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "={{ $json.message.chat.id }}",
+        "text": "={{ '✅ Documento classificado!\\n\\n📄 Tipo: ' + $json.classificacao.tipo_documento + '\\n👤 Cliente: ' + $json.cliente.nome + '\\n📁 Pasta: ' + $json.classificacao.categoria_pasta + '\\n🎯 Confiança: ' + ($json.classificacao.confianca * 100) + '%' }}"
+      },
+      "notas": "Confirma ao usuário que o documento foi classificado e arquivado."
+    },
+    {
+      "id": "node-15",
+      "name": "Pedir Confirmação",
+      "type": "n8n-nodes-base.telegram",
+      "position": [2420, 100],
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "={{ $json.message.chat.id }}",
+        "text": "={{ '⚠️ Match provável\\n\\nDocumento parece ser de: ' + $json.cliente.nome + '\\nConfiança: ' + ($json.score * 100) + '%\\n\\nConfirma? Responda SIM ou NÃO' }}"
+      },
+      "notas": "Rota match provável ou ambíguo: pede confirmação humana."
+    },
+    {
+      "id": "node-16",
+      "name": "Avisar Não Encontrado",
+      "type": "n8n-nodes-base.telegram",
+      "position": [2420, 250],
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "={{ $json.message.chat.id }}",
+        "text": "❌ Cliente não encontrado na base.\n\nUse /cliente para cadastrar antes de enviar documentos."
+      },
+      "notas": "Rota nao_encontrado: avisa e sugere cadastrar cliente."
+    },
+    {
+      "id": "node-17",
+      "name": "Registrar Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [3080, 0],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "sheetName": "LOGS",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "TIMESTAMP": "={{ $now.toISO() }}",
+            "ACAO": "classificar_documento",
+            "USUARIO": "={{ $json.telegram_user_id }}",
+            "RESULTADO": "={{ $json.match }}",
+            "DETALHES": "={{ JSON.stringify({tipo: $json.classificacao.tipo_documento, cliente: $json.cliente.nome, confianca: $json.classificacao.confianca}) }}"
+          }
+        }
+      },
+      "notas": "Registra toda ação na aba LOGS. Sempre executado, independente do resultado."
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {"main": [["Validar Usuário"]]},
+    "Validar Usuário": {"main": [["Baixar Arquivo"]]},
+    "Baixar Arquivo": {"main": [["Salvar em Temp"]]},
+    "Salvar em Temp": {"main": [["OCR pytesseract"]]},
+    "OCR pytesseract": {"main": [["Precisa Fallback?"]]},
+    "Precisa Fallback?": {
+      "main": [
+        ["Merge Texto"],
+        ["GPT Vision Fallback"]
+      ]
+    },
+    "GPT Vision Fallback": {"main": [["Merge Texto"]]},
+    "Merge Texto": {"main": [["Classificar com Claude"]]},
+    "Classificar com Claude": {"main": [["Match Cliente"]]},
+    "Match Cliente": {"main": [["Switch Match"]]},
+    "Switch Match": {
+      "main": [
+        ["Upload Google Drive"],
+        ["Pedir Confirmação"],
+        ["Pedir Confirmação"],
+        ["Avisar Não Encontrado"]
+      ]
+    },
+    "Upload Google Drive": {"main": [["Registrar no Sheets"]]},
+    "Registrar no Sheets": {"main": [["Responder Telegram OK"]]},
+    "Responder Telegram OK": {"main": [["Registrar Log"]]},
+    "Pedir Confirmação": {"main": [["Registrar Log"]]},
+    "Avisar Não Encontrado": {"main": [["Registrar Log"]]}
+  }
+}

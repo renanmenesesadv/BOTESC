@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Cliente",
+  "description": "Estrutura de dados para clientes do escritório",
+  "type": "object",
+  "required": ["id", "nome_completo", "cpf", "status"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "UUID único do cliente",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "nome_completo": {
+      "type": "string",
+      "minLength": 3,
+      "description": "Nome completo do cliente"
+    },
+    "cpf": {
+      "type": "string",
+      "pattern": "^[0-9]{3}\\.[0-9]{3}\\.[0-9]{3}-[0-9]{2}$",
+      "description": "CPF formatado (000.000.000-00)"
+    },
+    "rg": {
+      "type": "string",
+      "description": "Número do RG"
+    },
+    "telefone": {
+      "type": "string",
+      "description": "Telefone com DDD"
+    },
+    "email": {
+      "type": "string",
+      "format": "email"
+    },
+    "endereco": {
+      "type": "object",
+      "properties": {
+        "rua": { "type": "string" },
+        "numero": { "type": "string" },
+        "complemento": { "type": "string" },
+        "bairro": { "type": "string" },
+        "cidade": { "type": "string" },
+        "estado": { "type": "string", "minLength": 2, "maxLength": 2 },
+        "cep": { "type": "string", "pattern": "^[0-9]{5}-[0-9]{3}$" }
+      }
+    },
+    "processos": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Lista de IDs dos processos vinculados"
+    },
+    "pasta_drive_id": {
+      "type": "string",
+      "description": "ID da pasta raiz do cliente no Google Drive"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["ativo", "inativo", "arquivado"],
+      "default": "ativo"
+    },
+    "data_cadastro": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "cadastrado_por": {
+      "type": "string",
+      "description": "Telegram ID de quem cadastrou"
+    },
+    "observacoes": {
+      "type": "string"
+    }
+  },
+  "exemplo": {
+    "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "nome_completo": "Maria da Silva Santos",
+    "cpf": "123.456.789-00",
+    "rg": "2001234567",
+    "telefone": "(85) 99999-0000",
+    "email": "maria@email.com",
+    "endereco": {
+      "rua": "Rua das Flores",
+      "numero": "123",
+      "complemento": "Apt 4B",
+      "bairro": "Centro",
+      "cidade": "Fortaleza",
+      "estado": "CE",
+      "cep": "60000-000"
+    },
+    "processos": ["proc-001"],
+    "pasta_drive_id": "1aBcDeFgHiJkLmNoPqRsT",
+    "status": "ativo",
+    "data_cadastro": "2026-03-24T10:00:00-03:00",
+    "cadastrado_por": "123456789",
+    "observacoes": "Cliente indicado por João"
+  }
+}

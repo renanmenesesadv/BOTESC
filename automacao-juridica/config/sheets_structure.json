@@ -1,0 +1,136 @@
+{
+  "descricao": "Estrutura completa do Google Sheets — backup e base de dados operacional",
+  "planilha": {
+    "nome": "AUTOMAÇÃO JURÍDICA — BASE",
+    "id_env": "GOOGLE_SHEETS_ID",
+    "abas": {
+      "CLIENTES": {
+        "descricao": "Cadastro de todos os clientes do escritório",
+        "colunas": {
+          "A": {"nome": "ID", "tipo": "string", "exemplo": "cli-1711234567890", "descricao": "ID único gerado pelo sistema"},
+          "B": {"nome": "NOME", "tipo": "string", "exemplo": "Maria da Silva Santos", "descricao": "Nome completo"},
+          "C": {"nome": "CPF", "tipo": "string", "exemplo": "123.456.789-00", "descricao": "CPF formatado"},
+          "D": {"nome": "RG", "tipo": "string", "exemplo": "2001234567", "descricao": "Número do RG"},
+          "E": {"nome": "TELEFONE", "tipo": "string", "exemplo": "(85) 99999-0000", "descricao": "Telefone com DDD"},
+          "F": {"nome": "EMAIL", "tipo": "string", "exemplo": "maria@email.com", "descricao": "Email do cliente"},
+          "G": {"nome": "ENDERECO", "tipo": "string", "exemplo": "Rua das Flores, 123 - Centro, Fortaleza/CE", "descricao": "Endereço resumido"},
+          "H": {"nome": "PASTA_DRIVE_ID", "tipo": "string", "exemplo": "1aBcDeFgHiJkLmN", "descricao": "ID da pasta raiz no Drive"},
+          "I": {"nome": "PROCESSOS", "tipo": "string", "exemplo": "0001234-56.2025.4.05.8100", "descricao": "Números dos processos separados por vírgula"},
+          "J": {"nome": "STATUS", "tipo": "enum", "exemplo": "ativo", "valores": ["ativo", "inativo", "arquivado"]},
+          "K": {"nome": "DATA_CADASTRO", "tipo": "datetime", "exemplo": "24/03/2026 10:00", "descricao": "Data e hora do cadastro"},
+          "L": {"nome": "CADASTRADO_POR", "tipo": "string", "exemplo": "123456789", "descricao": "Telegram ID de quem cadastrou"},
+          "M": {"nome": "OBSERVACOES", "tipo": "string", "exemplo": "Cliente indicado por João", "descricao": "Notas livres"}
+        },
+        "regras": {
+          "chave_primaria": "ID",
+          "chave_unica": "CPF",
+          "ordenacao_padrao": "NOME ASC"
+        }
+      },
+      "PRAZOS": {
+        "descricao": "Todos os prazos e eventos agendados",
+        "colunas": {
+          "A": {"nome": "ID", "tipo": "string", "exemplo": "prz-1711234567890", "descricao": "ID único do prazo"},
+          "B": {"nome": "DATA_PUBLICACAO", "tipo": "date", "exemplo": "24/03/2026", "descricao": "Data da publicação no DJEN"},
+          "C": {"nome": "DATA_LIMITE", "tipo": "date", "exemplo": "14/04/2026", "descricao": "Data limite para cumprir o prazo"},
+          "D": {"nome": "PROCESSO", "tipo": "string", "exemplo": "0001234-56.2025.4.05.8100", "descricao": "Número CNJ do processo"},
+          "E": {"nome": "CLIENTE_ID", "tipo": "string", "exemplo": "cli-1711234567890", "descricao": "ID do cliente vinculado"},
+          "F": {"nome": "CLIENTE", "tipo": "string", "exemplo": "Maria da Silva Santos", "descricao": "Nome do cliente (redundante para consulta rápida)"},
+          "G": {"nome": "TIPO_ATO", "tipo": "enum", "exemplo": "citacao", "valores": ["intimacao", "citacao", "sentenca", "despacho", "decisao_interlocutoria", "acordao", "audiencia", "pericia", "cumprimento", "evento_manual", "outro"]},
+          "H": {"nome": "ACAO", "tipo": "string", "exemplo": "Apresentar contestação", "descricao": "O que o advogado precisa fazer"},
+          "I": {"nome": "PRAZO_DIAS", "tipo": "number", "exemplo": "15", "descricao": "Prazo em dias úteis"},
+          "J": {"nome": "URGENCIA", "tipo": "enum", "exemplo": "alta", "valores": ["critica", "alta", "media", "baixa"]},
+          "K": {"nome": "STATUS", "tipo": "enum", "exemplo": "pendente", "valores": ["pendente", "cumprido", "perdido"]},
+          "L": {"nome": "EVENTO_CALENDAR_ID", "tipo": "string", "exemplo": "evt_abc123xyz", "descricao": "ID do evento no Google Calendar"},
+          "M": {"nome": "ORIGEM", "tipo": "enum", "exemplo": "djen_auto", "valores": ["djen_auto", "manual", "telegram"]},
+          "N": {"nome": "CRIADO_EM", "tipo": "datetime", "exemplo": "24/03/2026 08:15", "descricao": "Timestamp de criação"},
+          "O": {"nome": "DETALHES", "tipo": "string", "exemplo": "Art. 335 CPC", "descricao": "Fundamentação ou observações"}
+        },
+        "regras": {
+          "chave_primaria": "ID",
+          "ordenacao_padrao": "DATA_LIMITE ASC",
+          "filtro_padrao": "STATUS = pendente"
+        },
+        "formatacao_condicional": {
+          "critica": {"cor_fundo": "#FF0000", "cor_texto": "#FFFFFF", "condicao": "URGENCIA = critica"},
+          "alta": {"cor_fundo": "#FF8C00", "cor_texto": "#FFFFFF", "condicao": "URGENCIA = alta"},
+          "media": {"cor_fundo": "#FFD700", "cor_texto": "#000000", "condicao": "URGENCIA = media"},
+          "baixa": {"cor_fundo": "#32CD32", "cor_texto": "#FFFFFF", "condicao": "URGENCIA = baixa"},
+          "cumprido": {"cor_fundo": "#E0E0E0", "tachado": true, "condicao": "STATUS = cumprido"},
+          "perdido": {"cor_fundo": "#8B0000", "cor_texto": "#FFFFFF", "condicao": "STATUS = perdido"},
+          "vencendo_hoje": {"borda": "#FF0000", "condicao": "DATA_LIMITE = HOJE"},
+          "vencendo_3_dias": {"borda": "#FF8C00", "condicao": "DATA_LIMITE <= HOJE+3"}
+        }
+      },
+      "DOCUMENTOS": {
+        "descricao": "Registro de todos os documentos processados pelo sistema",
+        "colunas": {
+          "A": {"nome": "ID", "tipo": "string", "exemplo": "doc-1711234567890", "descricao": "ID único do documento"},
+          "B": {"nome": "DATA", "tipo": "datetime", "exemplo": "24/03/2026 10:30", "descricao": "Data e hora do processamento"},
+          "C": {"nome": "CLIENTE_ID", "tipo": "string", "exemplo": "cli-1711234567890", "descricao": "ID do cliente vinculado"},
+          "D": {"nome": "CLIENTE", "tipo": "string", "exemplo": "Maria da Silva Santos", "descricao": "Nome do cliente"},
+          "E": {"nome": "CPF", "tipo": "string", "exemplo": "123.456.789-00", "descricao": "CPF extraído do documento"},
+          "F": {"nome": "TIPO", "tipo": "enum", "exemplo": "laudo_medico", "valores": ["peticao_inicial", "contestacao", "sentenca", "acordao", "procuracao", "contrato", "laudo_medico", "comprovante", "certidao", "oficio", "notificacao", "outro"]},
+          "G": {"nome": "PASTA", "tipo": "string", "exemplo": "02 - Medicos", "descricao": "Pasta de destino no Drive"},
+          "H": {"nome": "CONFIANCA", "tipo": "number", "exemplo": "0.92", "descricao": "Score de confiança da classificação (0.0 a 1.0)"},
+          "I": {"nome": "METODO_OCR", "tipo": "enum", "exemplo": "pytesseract", "valores": ["pytesseract", "gpt_vision", "manual"]},
+          "J": {"nome": "MATCH", "tipo": "enum", "exemplo": "forte", "valores": ["forte", "provavel", "ambiguo", "nao_encontrado", "manual"]},
+          "K": {"nome": "ARQUIVO", "tipo": "string", "exemplo": "laudo_medico_Maria_da_Silva_2026-03-24.pdf", "descricao": "Nome do arquivo no Drive"},
+          "L": {"nome": "DRIVE_FILE_ID", "tipo": "string", "exemplo": "1xYzAbCdEfG", "descricao": "ID do arquivo no Drive"},
+          "M": {"nome": "PROCESSO", "tipo": "string", "exemplo": "0001234-56.2025.4.05.8100", "descricao": "Número do processo vinculado"},
+          "N": {"nome": "ENVIADO_POR", "tipo": "string", "exemplo": "123456789", "descricao": "Telegram ID de quem enviou"},
+          "O": {"nome": "RESUMO", "tipo": "string", "exemplo": "Laudo ortopédico atestando incapacidade", "descricao": "Resumo gerado pelo Claude"}
+        },
+        "regras": {
+          "chave_primaria": "ID",
+          "ordenacao_padrao": "DATA DESC"
+        }
+      },
+      "LOGS": {
+        "descricao": "Trilha de auditoria — toda ação do sistema é registrada aqui",
+        "colunas": {
+          "A": {"nome": "TIMESTAMP", "tipo": "datetime", "exemplo": "2026-03-24T10:30:00-03:00", "descricao": "Momento exato da ação (ISO 8601)"},
+          "B": {"nome": "ACAO", "tipo": "enum", "exemplo": "classificar_documento", "valores": [
+            "classificar_documento",
+            "cadastrar_cliente",
+            "captura_djen",
+            "extrair_prazo",
+            "match_cliente",
+            "criar_evento",
+            "upload_drive",
+            "login_tentativa",
+            "erro_sistema",
+            "prazo_sem_cliente",
+            "prazo_cumprido",
+            "prazo_perdido"
+          ]},
+          "C": {"nome": "USUARIO", "tipo": "string", "exemplo": "123456789", "descricao": "Telegram ID do usuário ou 'sistema' para ações automáticas"},
+          "D": {"nome": "RESULTADO", "tipo": "enum", "exemplo": "sucesso", "valores": ["sucesso", "falha", "parcial", "pendente"]},
+          "E": {"nome": "DETALHES", "tipo": "string", "exemplo": "{\"tipo\":\"laudo_medico\",\"confianca\":0.92}", "descricao": "JSON com detalhes específicos da ação"},
+          "F": {"nome": "IP_ORIGEM", "tipo": "string", "exemplo": "n8n-server", "descricao": "Identificação da origem da ação"},
+          "G": {"nome": "DURACAO_MS", "tipo": "number", "exemplo": "3450", "descricao": "Tempo de execução em milissegundos"}
+        },
+        "regras": {
+          "ordenacao_padrao": "TIMESTAMP DESC",
+          "retencao": "90 dias (exportar para Drive antes de limpar)",
+          "nunca_deletar": "Registros de login_tentativa e erro_sistema"
+        }
+      },
+      "USUARIOS": {
+        "descricao": "Controle de acesso — quem pode usar o bot",
+        "colunas": {
+          "A": {"nome": "TELEGRAM_ID", "tipo": "string", "exemplo": "123456789", "descricao": "ID do Telegram do usuário"},
+          "B": {"nome": "NOME", "tipo": "string", "exemplo": "Dr. João Pereira", "descricao": "Nome do usuário"},
+          "C": {"nome": "ROLE", "tipo": "enum", "exemplo": "advogado", "valores": ["admin", "advogado", "estagiario"]},
+          "D": {"nome": "ATIVO", "tipo": "boolean", "exemplo": "TRUE", "descricao": "Se o usuário está ativo"},
+          "E": {"nome": "DATA_CADASTRO", "tipo": "date", "exemplo": "24/03/2026", "descricao": "Data de cadastro"},
+          "F": {"nome": "ULTIMO_ACESSO", "tipo": "datetime", "exemplo": "24/03/2026 10:30", "descricao": "Último uso do bot"}
+        },
+        "regras": {
+          "chave_primaria": "TELEGRAM_ID",
+          "filtro_padrao": "ATIVO = TRUE"
+        }
+      }
+    }
+  }
+}

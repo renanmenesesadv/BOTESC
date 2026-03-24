@@ -1,0 +1,85 @@
+{
+  "sistema": {
+    "nome": "Automação Jurídica",
+    "versao": "1.0.0",
+    "ambiente": "development",
+    "idioma": "pt-BR",
+    "fuso_horario": "America/Sao_Paulo"
+  },
+  "telegram": {
+    "bot_token_env": "TELEGRAM_BOT_TOKEN",
+    "webhook_url": "",
+    "ids_autorizados": [],
+    "comandos": ["/cliente", "/documento", "/agendar", "/prazo"]
+  },
+  "n8n": {
+    "base_url": "http://localhost:5678",
+    "webhook_prefix": "/webhook",
+    "endpoints": {
+      "receber_documento": "/webhook/documento",
+      "cadastrar_cliente": "/webhook/cliente",
+      "consultar_prazo": "/webhook/prazo",
+      "agendar_evento": "/webhook/agendar"
+    }
+  },
+  "ocr": {
+    "engine": "pytesseract",
+    "idioma": "por",
+    "confianca_minima": 0.6,
+    "fallback": "gpt_vision"
+  },
+  "ai": {
+    "classificacao": {
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5-20251001",
+      "max_tokens": 1024,
+      "temperature": 0.0,
+      "api_key_env": "ANTHROPIC_API_KEY"
+    },
+    "vision_fallback": {
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "max_tokens": 1024,
+      "api_key_env": "OPENAI_API_KEY"
+    }
+  },
+  "google": {
+    "credentials_env": "GOOGLE_CREDENTIALS_PATH",
+    "drive": {
+      "pasta_raiz_id": "",
+      "estrutura_pastas": [
+        "00 - Entrada",
+        "01 - Protocolo",
+        "02 - Medicos",
+        "03 - Processual",
+        "04 - Contratos"
+      ]
+    },
+    "sheets": {
+      "planilha_id": "",
+      "abas": ["CLIENTES", "PRAZOS", "DOCUMENTOS", "LOGS"]
+    },
+    "calendar": {
+      "calendario_id": "primary"
+    }
+  },
+  "browser": {
+    "headless": false,
+    "timeout_segundos": 120,
+    "sites": {
+      "djen": "https://www.jfce.jus.br/djen/",
+      "pje": "https://pje.jfce.jus.br/"
+    }
+  },
+  "seguranca": {
+    "roles": ["admin", "advogado", "estagiario"],
+    "chave_ativacao_env": "SYSTEM_ACTIVATION_KEY",
+    "max_tentativas_login": 3
+  },
+  "logs": {
+    "diretorio": "data/logs",
+    "nivel": "INFO",
+    "formato": "json",
+    "rotacao_dias": 30
+  }
+}

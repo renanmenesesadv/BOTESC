@@ -1,0 +1,287 @@
+{
+  "name": "WF-03: Capturar Prazos DJEN",
+  "nodes": [
+    {
+      "id": "node-01",
+      "name": "Cron 08h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [0, 0],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 8,
+              "triggerAtMinute": 0,
+              "daysOfWeek": [1, 2, 3, 4, 5]
+            }
+          ]
+        }
+      },
+      "notas": "Dispara seg-sex às 08h (horário de Brasília)"
+    },
+    {
+      "id": "node-02",
+      "name": "Carregar Clientes",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [220, 0],
+      "parameters": {
+        "operation": "read",
+        "sheetName": "CLIENTES",
+        "range": "A:Z"
+      },
+      "notas": "Lê todos os clientes ativos do Sheets para cruzamento posterior."
+    },
+    {
+      "id": "node-03",
+      "name": "Abrir DJEN",
+      "type": "n8n-nodes-base.executeCommand",
+      "position": [440, 0],
+      "parameters": {
+        "command": "cd {{ $env.PROJECT_PATH }} && python workers/browser/djen.py"
+      },
+      "notas": "Playwright abre navegador, acessa DJEN, captura publicações do dia. Timeout: 2min para login manual."
+    },
+    {
+      "id": "node-04",
+      "name": "Tem Publicações?",
+      "type": "n8n-nodes-base.if",
+      "position": [660, 0],
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ JSON.parse($json.stdout).total_publicacoes }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "notas": "Se não encontrou publicações, encerra sem erro."
+    },
+    {
+      "id": "node-05",
+      "name": "Split Publicações",
+      "type": "n8n-nodes-base.splitInBatches",
+      "position": [880, 0],
+      "parameters": {
+        "batchSize": 1,
+        "options": {
+          "reset": false
+        }
+      },
+      "notas": "Processa uma publicação por vez para não sobrecarregar a API."
+    },
+    {
+      "id": "node-06",
+      "name": "Extrair Prazos (Claude)",
+      "type": "n8n-nodes-base.executeCommand",
+      "position": [1100, 0],
+      "parameters": {
+        "command": "cd {{ $env.PROJECT_PATH }} && python workers/n8n/extract_deadline.py \"{{ $json.texto }}\" \"{{ $json.data_publicacao }}\""
+      },
+      "notas": "Claude HAIKU analisa a publicação e extrai prazos. DECISÃO: o que é esse ato? Qual o prazo?"
+    },
+    {
+      "id": "node-07",
+      "name": "Tem Prazos?",
+      "type": "n8n-nodes-base.if",
+      "position": [1320, 0],
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ JSON.parse($json.stdout).total_prazos }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "notas": "Publicações informativas (sem prazo) são ignoradas."
+    },
+    {
+      "id": "node-08",
+      "name": "Loop Prazos",
+      "type": "n8n-nodes-base.splitInBatches",
+      "position": [1540, 0],
+      "parameters": {
+        "batchSize": 1
+      },
+      "notas": "Uma publicação pode conter múltiplos prazos. Processa um por vez."
+    },
+    {
+      "id": "node-09",
+      "name": "Match Cliente",
+      "type": "n8n-nodes-base.executeCommand",
+      "position": [1760, 0],
+      "parameters": {
+        "command": "cd {{ $env.PROJECT_PATH }} && python workers/n8n/client_match.py '{{ JSON.stringify({nome_cliente: $json.parte_autora, cpf: \"\", numero_processo: $json.numero_processo}) }}'"
+      },
+      "notas": "Cruza parte_autora e numero_processo com base de clientes."
+    },
+    {
+      "id": "node-10",
+      "name": "Switch Match",
+      "type": "n8n-nodes-base.switch",
+      "position": [1980, 0],
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ JSON.parse($json.stdout).match }}",
+        "rules": {
+          "rules": [
+            {"value": "forte", "output": 0},
+            {"value": "provavel", "output": 0},
+            {"value": "ambiguo", "output": 1},
+            {"value": "nao_encontrado", "output": 2}
+          ]
+        }
+      },
+      "notas": "Forte e provável seguem o mesmo fluxo. Ambíguo pede confirmação. Não encontrado registra e avisa."
+    },
+    {
+      "id": "node-11",
+      "name": "Registrar Prazo (Sheets)",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [2200, -100],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "sheetName": "PRAZOS",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ID": "={{ 'prz-' + Date.now() }}",
+            "DATA_PUBLICACAO": "={{ $json.data_publicacao }}",
+            "DATA_LIMITE": "={{ $json.data_limite }}",
+            "PROCESSO": "={{ $json.numero_processo }}",
+            "CLIENTE": "={{ $json.cliente.nome }}",
+            "TIPO_ATO": "={{ $json.tipo_ato }}",
+            "ACAO": "={{ $json.acao_necessaria }}",
+            "PRAZO_DIAS": "={{ $json.prazo_dias }}",
+            "URGENCIA": "={{ $json.urgencia }}",
+            "STATUS": "pendente"
+          }
+        }
+      },
+      "notas": "Registra prazo na aba PRAZOS."
+    },
+    {
+      "id": "node-12",
+      "name": "Criar Evento Calendar",
+      "type": "n8n-nodes-base.googleCalendar",
+      "position": [2420, -100],
+      "parameters": {
+        "operation": "create",
+        "calendar": "primary",
+        "title": "={{ '⚖️ ' + $json.tipo_ato.toUpperCase() + ' - ' + $json.cliente.nome }}",
+        "start": "={{ $json.data_limite }}",
+        "end": "={{ $json.data_limite }}",
+        "allDay": true,
+        "additionalFields": {
+          "description": "={{ 'Processo: ' + $json.numero_processo + '\\nAção: ' + $json.acao_necessaria + '\\nUrgência: ' + $json.urgencia + '\\nPrazo: ' + $json.prazo_dias + ' dias' }}",
+          "reminders": {
+            "useDefault": false,
+            "overrides": [
+              {"method": "popup", "minutes": 4320},
+              {"method": "popup", "minutes": 1440},
+              {"method": "popup", "minutes": 60}
+            ]
+          }
+        }
+      },
+      "notas": "Cria evento no dia do vencimento com 3 lembretes: 3 dias antes (4320min), 1 dia antes (1440min), 1 hora antes (60min)."
+    },
+    {
+      "id": "node-13",
+      "name": "Alerta Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "position": [2640, -100],
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "={{ $json.advogado_telegram_id }}",
+        "text": "={{ $json.urgencia === 'critica' ? '🔴' : $json.urgencia === 'alta' ? '🟠' : $json.urgencia === 'media' ? '🟡' : '🟢' }} *PRAZO IDENTIFICADO*\n\n📋 Processo: `{{ $json.numero_processo }}`\n👤 Cliente: {{ $json.cliente.nome }}\n⚖️ Ato: {{ $json.descricao_ato }}\n📅 Vencimento: {{ $json.data_limite }}\n⏰ Prazo: {{ $json.prazo_dias }} dias\n🎯 Urgência: *{{ $json.urgencia.toUpperCase() }}*\n\n✏️ Ação: {{ $json.acao_necessaria }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "notas": "Envia alerta formatado no Telegram. Cor do emoji varia com urgência."
+    },
+    {
+      "id": "node-14",
+      "name": "Alerta Ambíguo",
+      "type": "n8n-nodes-base.telegram",
+      "position": [2200, 100],
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "={{ $json.admin_telegram_id }}",
+        "text": "❓ *PRAZO COM CLIENTE AMBÍGUO*\n\nProcesso: `{{ $json.numero_processo }}`\nParte: {{ $json.parte_autora }}\nAto: {{ $json.descricao_ato }}\n\nClientes possíveis:\n{{ $json.todos_matches.map(m => '• ' + m.nome + ' (' + (m.score*100) + '%)').join('\\n') }}\n\nResponda com o nome correto.",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "notas": "Quando o match é ambíguo, pede ao admin para identificar manualmente."
+    },
+    {
+      "id": "node-15",
+      "name": "Log Não Encontrado",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [2200, 250],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "sheetName": "LOGS",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "TIMESTAMP": "={{ $now.toISO() }}",
+            "ACAO": "prazo_sem_cliente",
+            "DETALHES": "={{ JSON.stringify({processo: $json.numero_processo, parte: $json.parte_autora, ato: $json.tipo_ato}) }}"
+          }
+        }
+      },
+      "notas": "Registra publicações com prazo mas sem cliente vinculado. Revisão manual posterior."
+    },
+    {
+      "id": "node-16",
+      "name": "Registrar Log Final",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [2860, 0],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "sheetName": "LOGS",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "TIMESTAMP": "={{ $now.toISO() }}",
+            "ACAO": "captura_djen",
+            "RESULTADO": "={{ $json.total_publicacoes + ' publicações, ' + $json.total_prazos + ' prazos' }}",
+            "DETALHES": "={{ JSON.stringify({publicacoes: $json.total_publicacoes, prazos: $json.total_prazos}) }}"
+          }
+        }
+      },
+      "notas": "Log final da execução diária."
+    }
+  ],
+  "connections": {
+    "Cron 08h": {"main": [["Carregar Clientes"]]},
+    "Carregar Clientes": {"main": [["Abrir DJEN"]]},
+    "Abrir DJEN": {"main": [["Tem Publicações?"]]},
+    "Tem Publicações?": {"main": [["Split Publicações"], []]},
+    "Split Publicações": {"main": [["Extrair Prazos (Claude)"]]},
+    "Extrair Prazos (Claude)": {"main": [["Tem Prazos?"]]},
+    "Tem Prazos?": {"main": [["Loop Prazos"], ["Split Publicações"]]},
+    "Loop Prazos": {"main": [["Match Cliente"]]},
+    "Match Cliente": {"main": [["Switch Match"]]},
+    "Switch Match": {
+      "main": [
+        ["Registrar Prazo (Sheets)"],
+        ["Alerta Ambíguo"],
+        ["Log Não Encontrado"]
+      ]
+    },
+    "Registrar Prazo (Sheets)": {"main": [["Criar Evento Calendar"]]},
+    "Criar Evento Calendar": {"main": [["Alerta Telegram"]]},
+    "Alerta Telegram": {"main": [["Registrar Log Final"]]},
+    "Alerta Ambíguo": {"main": [["Registrar Log Final"]]},
+    "Log Não Encontrado": {"main": [["Registrar Log Final"]]}
+  }
+}

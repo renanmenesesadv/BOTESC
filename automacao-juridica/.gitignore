@@ -1,0 +1,28 @@
+# Variáveis de ambiente (NUNCA commitar)
+.env
+
+# Credenciais Google
+config/google_credentials.json
+config/service_account.json
+
+# Sessão do navegador (cookies e login)
+data/browser_session/
+
+# Arquivos temporários
+data/temp/*
+!data/temp/.gitkeep
+
+# Logs locais
+data/logs/*
+!data/logs/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db

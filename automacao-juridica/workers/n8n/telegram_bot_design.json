@@ -1,0 +1,116 @@
+{
+  "bot": {
+    "nome": "JurídicoBot",
+    "descricao": "Assistente de automação jurídica para escritório de advocacia"
+  },
+  "comandos": {
+    "/start": {
+      "workflow": "nenhum",
+      "descricao": "Mensagem de boas-vindas",
+      "resposta": "⚖️ *JurídicoBot*\n\nComandos disponíveis:\n\n📄 /documento — Envie um documento para classificar\n👤 /cliente — Cadastrar novo cliente\n📅 /agendar — Agendar evento no calendário\n⏰ /prazo — Consultar prazos pendentes\n🔍 /buscar — Buscar cliente ou processo\n📊 /status — Resumo do dia\n❓ /ajuda — Ver comandos detalhados",
+      "permissao": "todos"
+    },
+    "/cliente": {
+      "workflow": "WF-02",
+      "descricao": "Cadastrar novo cliente",
+      "fluxo_conversa": [
+        {"bot": "📝 *Cadastro de Cliente*\n\nEnvie os dados:\n\n`Nome Completo\nCPF\nTelefone\nEmail`"},
+        {"usuario": "Maria da Silva Santos\n123.456.789-00\n(85) 99999-0000\nmaria@email.com"},
+        {"bot_valida": "CPF com 11 dígitos?"},
+        {"bot_executa": ["Cria pasta no Drive (5 subpastas)", "Registra no Sheets", "Atualiza clientes.json"]},
+        {"bot": "✅ Cliente cadastrado!\n\n👤 Maria da Silva Santos\n📄 CPF: 123.456.789-00\n📁 Pasta criada no Drive"}
+      ],
+      "permissao": "admin, advogado"
+    },
+    "/documento": {
+      "workflow": "WF-01",
+      "descricao": "Enviar documento para classificação automática",
+      "fluxo_conversa": [
+        {"bot": "📄 *Envio de Documento*\n\nEnvie o arquivo (PDF ou foto) que deseja classificar.\n\nO sistema irá:\n1. Extrair o texto (OCR)\n2. Classificar o tipo\n3. Identificar o cliente\n4. Arquivar no Drive"},
+        {"usuario": "[envia PDF ou foto]"},
+        {"bot": "🔄 Processando documento..."},
+        {"bot_executa": ["OCR (pytesseract)", "Se falhar → GPT Vision", "Claude classifica", "Match com cliente"]},
+        {"bot_match_forte": "✅ Documento classificado!\n\n📄 Tipo: Laudo Médico\n👤 Cliente: Maria da Silva Santos\n📁 Pasta: 02 - Medicos\n🎯 Confiança: 92%"},
+        {"bot_match_provavel": "⚠️ Match provável\n\nDocumento parece ser de: Maria da Silva Santos\nConfiança: 72%\n\nConfirma? SIM ou NÃO"},
+        {"bot_match_ambiguo": "❓ Encontrei 2 possíveis clientes:\n\n1. Maria da Silva Santos (68%)\n2. Maria Silva Oliveira (61%)\n\nResponda com o número."},
+        {"bot_nao_encontrado": "❌ Cliente não encontrado.\n\nDocumento salvo em 00 - Entrada.\nUse /cliente para cadastrar."}
+      ],
+      "aceita": ["document", "photo"],
+      "permissao": "admin, advogado, estagiario"
+    },
+    "/agendar": {
+      "workflow": "WF-04",
+      "descricao": "Agendar evento no Google Calendar",
+      "fluxo_conversa": [
+        {"bot": "📅 *Agendar Evento*\n\nEnvie os dados:\n\n`Título\nData (DD/MM/AAAA)\nHorário (HH:MM)\nCliente\nDescrição`"},
+        {"usuario": "Audiência Trabalhista\n15/04/2026\n14:00\nMaria da Silva\nAudiência de instrução na 5ª Vara"},
+        {"bot_valida": "Data no formato correto?"},
+        {"bot_executa": ["Cria evento no Google Calendar", "Registra no Sheets", "Configura lembretes"]},
+        {"bot": "✅ Evento agendado!\n\n📅 Audiência Trabalhista\n🕐 15/04/2026 às 14:00\n👤 Maria da Silva\n\nLembretes: 1 dia antes e 1 hora antes."}
+      ],
+      "permissao": "admin, advogado"
+    },
+    "/prazo": {
+      "workflow": "WF-05",
+      "descricao": "Consultar prazos pendentes",
+      "variantes": {
+        "/prazo": "Lista todos os prazos pendentes",
+        "/prazo Maria": "Filtra prazos do cliente Maria",
+        "/prazo urgente": "Lista prazos críticos e altos",
+        "/prazo 0001234": "Busca por número de processo"
+      },
+      "fluxo_conversa": [
+        {"usuario": "/prazo urgente"},
+        {"bot_executa": ["Lê aba PRAZOS do Sheets", "Filtra por status pendente", "Filtra por urgência critica/alta", "Ordena por data"]},
+        {"bot": "📋 *PRAZOS PENDENTES* — urgente\n\n🔴 *CITAÇÃO*\n  📋 `0001234-56.2025.4.05.8100`\n  👤 Maria da Silva Santos\n  📅 Vencimento: 14/04/2026\n  ✏️ Apresentar contestação\n\n🟠 *RECURSO*\n  📋 `0005678-90.2024.4.05.8100`\n  👤 João Pedro de Oliveira\n  📅 Vencimento: 20/04/2026\n  ✏️ Interpor apelação\n\n_Total: 2 prazo(s) pendente(s)_"}
+      ],
+      "permissao": "todos"
+    },
+    "/buscar": {
+      "workflow": "WF-05 (variante)",
+      "descricao": "Buscar cliente ou processo na base",
+      "variantes": {
+        "/buscar Maria": "Busca cliente por nome",
+        "/buscar 123.456.789-00": "Busca cliente por CPF",
+        "/buscar 0001234": "Busca processo por número"
+      },
+      "fluxo_conversa": [
+        {"usuario": "/buscar Maria"},
+        {"bot_executa": ["Lê aba CLIENTES do Sheets", "Filtra por nome"]},
+        {"bot": "🔍 *Resultado da busca:* Maria\n\n👤 Maria da Silva Santos\n📄 CPF: 123.456.789-00\n📱 (85) 99999-0000\n📁 Status: Ativo\n📋 Processos: 1"}
+      ],
+      "permissao": "admin, advogado"
+    },
+    "/status": {
+      "workflow": "WF-05 (variante)",
+      "descricao": "Resumo diário do sistema",
+      "fluxo_conversa": [
+        {"usuario": "/status"},
+        {"bot_executa": ["Conta prazos da semana", "Conta documentos do dia", "Conta clientes ativos"]},
+        {"bot": "📊 *Status do Dia* — 24/03/2026\n\n⏰ Prazos esta semana: 3\n  🔴 Críticos: 1\n  🟠 Altos: 1\n  🟡 Médios: 1\n\n📄 Documentos hoje: 5\n👤 Clientes ativos: 47\n\n🕐 Última captura DJEN: 08:00\n✅ Sistema operacional"}
+      ],
+      "permissao": "admin"
+    },
+    "/ajuda": {
+      "workflow": "nenhum",
+      "descricao": "Instruções detalhadas",
+      "resposta": "❓ *Ajuda — JurídicoBot*\n\n*Enviar documento:*\nEnvie PDF ou foto diretamente, ou use /documento\n\n*Cadastrar cliente:*\n/cliente → siga as instruções\n\n*Agendar compromisso:*\n/agendar → título, data, horário, cliente\n\n*Consultar prazos:*\n/prazo → todos pendentes\n/prazo Maria → por cliente\n/prazo urgente → críticos e altos\n\n*Buscar:*\n/buscar nome ou CPF\n\n*Resumo:*\n/status → visão geral do dia",
+      "permissao": "todos"
+    }
+  },
+  "mensagens_automaticas": {
+    "arquivo_sem_comando": {
+      "trigger": "Usuário envia PDF ou foto sem usar /documento",
+      "acao": "Processa automaticamente como WF-01",
+      "resposta_inicial": "🔄 Documento recebido! Processando..."
+    },
+    "usuario_nao_autorizado": {
+      "trigger": "Telegram ID não está na whitelist",
+      "resposta": "🔒 Acesso não autorizado.\n\nSeu ID: {user_id}\nEntre em contato com o administrador."
+    },
+    "erro_generico": {
+      "trigger": "Qualquer erro não tratado",
+      "resposta": "❌ Ocorreu um erro ao processar sua solicitação.\n\nTente novamente ou contate o administrador."
+    }
+  }
+}

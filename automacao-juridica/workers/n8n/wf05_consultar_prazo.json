@@ -1,0 +1,89 @@
+{
+  "name": "WF-05: Consultar Prazos",
+  "nodes": [
+    {
+      "id": "node-01",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "position": [0, 0],
+      "parameters": {
+        "updates": ["message"]
+      },
+      "notas": "Filtra mensagens que começam com /prazo"
+    },
+    {
+      "id": "node-02",
+      "name": "Validar Comando",
+      "type": "n8n-nodes-base.if",
+      "position": [220, 0],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.message.text }}",
+              "operation": "startsWith",
+              "value2": "/prazo"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "node-03",
+      "name": "Extrair Filtro",
+      "type": "n8n-nodes-base.code",
+      "position": [440, 0],
+      "parameters": {
+        "jsCode": "const texto = $input.first().json.message.text;\nconst chatId = $input.first().json.message.chat.id;\n\n// /prazo → todos os pendentes\n// /prazo Maria → filtra por cliente\n// /prazo urgente → filtra por urgência\n// /prazo 0001234 → filtra por processo\n\nconst partes = texto.split(' ').slice(1);\nconst filtro = partes.join(' ').trim();\n\nlet tipo_filtro = 'todos';\nif (filtro) {\n  if (['critica', 'alta', 'media', 'baixa', 'urgente'].includes(filtro.toLowerCase())) {\n    tipo_filtro = 'urgencia';\n  } else if (/\\d{5,}/.test(filtro)) {\n    tipo_filtro = 'processo';\n  } else {\n    tipo_filtro = 'cliente';\n  }\n}\n\nreturn [{json: {\n  filtro,\n  tipo_filtro,\n  chat_id: chatId\n}}];"
+      },
+      "notas": "Identifica o tipo de filtro: todos, por cliente, por urgência ou por processo."
+    },
+    {
+      "id": "node-04",
+      "name": "Buscar Prazos (Sheets)",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [660, 0],
+      "parameters": {
+        "operation": "read",
+        "sheetName": "PRAZOS",
+        "range": "A:Z",
+        "filters": {
+          "column": "STATUS",
+          "value": "pendente"
+        }
+      },
+      "notas": "Lê todos os prazos pendentes."
+    },
+    {
+      "id": "node-05",
+      "name": "Filtrar e Formatar",
+      "type": "n8n-nodes-base.code",
+      "position": [880, 0],
+      "parameters": {
+        "jsCode": "const prazos = $input.all().map(i => i.json);\nconst filtro = $('Extrair Filtro').first().json.filtro;\nconst tipo = $('Extrair Filtro').first().json.tipo_filtro;\nconst chatId = $('Extrair Filtro').first().json.chat_id;\n\nlet filtrados = prazos.filter(p => p.STATUS === 'pendente');\n\n// Aplica filtro\nif (tipo === 'cliente' && filtro) {\n  filtrados = filtrados.filter(p =>\n    (p.CLIENTE || '').toLowerCase().includes(filtro.toLowerCase())\n  );\n} else if (tipo === 'urgencia') {\n  const urg = filtro.toLowerCase() === 'urgente' ? ['critica', 'alta'] : [filtro.toLowerCase()];\n  filtrados = filtrados.filter(p => urg.includes((p.URGENCIA || '').toLowerCase()));\n} else if (tipo === 'processo' && filtro) {\n  filtrados = filtrados.filter(p =>\n    (p.PROCESSO || '').includes(filtro)\n  );\n}\n\n// Ordena por data limite\nfiltrados.sort((a, b) => {\n  const dA = new Date(a.DATA_LIMITE || '2099-12-31');\n  const dB = new Date(b.DATA_LIMITE || '2099-12-31');\n  return dA - dB;\n});\n\n// Formata mensagem\nlet msg = '';\n\nif (filtrados.length === 0) {\n  msg = '📭 Nenhum prazo pendente encontrado';\n  if (filtro) msg += ' para \"' + filtro + '\"';\n  msg += '.';\n} else {\n  const icones = {\n    critica: '🔴',\n    alta: '🟠',\n    media: '🟡',\n    baixa: '🟢'\n  };\n\n  msg = '📋 *PRAZOS PENDENTES*';\n  if (filtro) msg += ' — ' + filtro;\n  msg += '\\n\\n';\n\n  filtrados.slice(0, 10).forEach((p, i) => {\n    const icone = icones[p.URGENCIA] || '⚪';\n    msg += icone + ' *' + (p.TIPO_ATO || 'Ato').toUpperCase() + '*\\n';\n    msg += '  📋 `' + (p.PROCESSO || 'N/A') + '`\\n';\n    msg += '  👤 ' + (p.CLIENTE || 'N/A') + '\\n';\n    msg += '  📅 Vencimento: ' + (p.DATA_LIMITE || 'N/A') + '\\n';\n    msg += '  ✏️ ' + (p.ACAO || 'N/A') + '\\n\\n';\n  });\n\n  if (filtrados.length > 10) {\n    msg += '... e mais ' + (filtrados.length - 10) + ' prazos.';\n  }\n\n  msg += '\\n_Total: ' + filtrados.length + ' prazo(s) pendente(s)_';\n}\n\nreturn [{json: {msg, chat_id: chatId, total: filtrados.length}}];"
+      },
+      "notas": "Filtra, ordena por data e formata mensagem legível para o Telegram."
+    },
+    {
+      "id": "node-06",
+      "name": "Enviar Resultado",
+      "type": "n8n-nodes-base.telegram",
+      "position": [1100, 0],
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.msg }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {"main": [["Validar Comando"]]},
+    "Validar Comando": {"main": [["Extrair Filtro"]]},
+    "Extrair Filtro": {"main": [["Buscar Prazos (Sheets)"]]},
+    "Buscar Prazos (Sheets)": {"main": [["Filtrar e Formatar"]]},
+    "Filtrar e Formatar": {"main": [["Enviar Resultado"]]}
+  }
+}

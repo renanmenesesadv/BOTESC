@@ -1,0 +1,237 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Processo Jurídico",
+  "description": "Estrutura de dados para processos, prazos e documentos",
+  "definitions": {
+    "processo": {
+      "type": "object",
+      "required": ["id", "numero_processo", "cliente_id", "status"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "UUID único do processo"
+        },
+        "numero_processo": {
+          "type": "string",
+          "pattern": "^[0-9]{7}-[0-9]{2}\\.[0-9]{4}\\.[0-9]\\.[0-9]{2}\\.[0-9]{4}$",
+          "description": "Número CNJ (0000000-00.0000.0.00.0000)"
+        },
+        "cliente_id": {
+          "type": "string",
+          "description": "UUID do cliente vinculado"
+        },
+        "tipo_acao": {
+          "type": "string",
+          "enum": [
+            "previdenciaria",
+            "trabalhista",
+            "civel",
+            "criminal",
+            "administrativa",
+            "tributaria",
+            "outro"
+          ]
+        },
+        "vara": {
+          "type": "string",
+          "description": "Vara ou turma responsável"
+        },
+        "tribunal": {
+          "type": "string",
+          "description": "Ex: TRF5, TJCE, TRT7"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["ativo", "suspenso", "arquivado", "encerrado"],
+          "default": "ativo"
+        },
+        "data_distribuicao": {
+          "type": "string",
+          "format": "date"
+        },
+        "prazos": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/prazo" }
+        },
+        "documentos": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/documento" }
+        },
+        "observacoes": {
+          "type": "string"
+        },
+        "criado_em": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "criado_por": {
+          "type": "string"
+        }
+      }
+    },
+    "prazo": {
+      "type": "object",
+      "required": ["id", "processo_id", "tipo_ato", "data_limite", "status"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "processo_id": {
+          "type": "string"
+        },
+        "tipo_ato": {
+          "type": "string",
+          "enum": [
+            "contestacao",
+            "recurso",
+            "manifestacao",
+            "audiencia",
+            "pericia",
+            "cumprimento_sentenca",
+            "juntada",
+            "outro"
+          ]
+        },
+        "descricao": {
+          "type": "string"
+        },
+        "data_publicacao": {
+          "type": "string",
+          "format": "date"
+        },
+        "data_limite": {
+          "type": "string",
+          "format": "date"
+        },
+        "prazo_dias": {
+          "type": "integer"
+        },
+        "urgencia": {
+          "type": "string",
+          "enum": ["critica", "alta", "media", "baixa"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pendente", "cumprido", "perdido"],
+          "default": "pendente"
+        },
+        "evento_calendar_id": {
+          "type": "string",
+          "description": "ID do evento criado no Google Calendar"
+        },
+        "criado_em": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "documento": {
+      "type": "object",
+      "required": ["id", "tipo_documento", "drive_file_id"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "tipo_documento": {
+          "type": "string",
+          "enum": [
+            "peticao_inicial",
+            "contestacao",
+            "sentenca",
+            "acordao",
+            "procuracao",
+            "contrato",
+            "laudo_medico",
+            "comprovante",
+            "certidao",
+            "oficio",
+            "notificacao",
+            "outro"
+          ]
+        },
+        "nome_arquivo": {
+          "type": "string"
+        },
+        "drive_file_id": {
+          "type": "string",
+          "description": "ID do arquivo no Google Drive"
+        },
+        "pasta_categoria": {
+          "type": "string",
+          "enum": [
+            "00 - Entrada",
+            "01 - Protocolo",
+            "02 - Medicos",
+            "03 - Processual",
+            "04 - Contratos"
+          ]
+        },
+        "texto_extraido": {
+          "type": "boolean",
+          "description": "Se o OCR conseguiu extrair texto"
+        },
+        "metodo_extracao": {
+          "type": "string",
+          "enum": ["pytesseract", "gpt_vision", "manual"]
+        },
+        "confianca_classificacao": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "classificado_por": {
+          "type": "string",
+          "enum": ["claude_haiku", "manual"]
+        },
+        "criado_em": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "enviado_por": {
+          "type": "string",
+          "description": "Telegram ID de quem enviou"
+        }
+      }
+    }
+  },
+  "exemplo_processo": {
+    "id": "proc-001",
+    "numero_processo": "0001234-56.2025.4.05.8100",
+    "cliente_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "tipo_acao": "previdenciaria",
+    "vara": "14ª Vara Federal de Fortaleza",
+    "tribunal": "TRF5",
+    "status": "ativo",
+    "data_distribuicao": "2025-06-15",
+    "prazos": [
+      {
+        "id": "prz-001",
+        "processo_id": "proc-001",
+        "tipo_ato": "contestacao",
+        "descricao": "Prazo para contestação do INSS",
+        "data_publicacao": "2026-03-20",
+        "data_limite": "2026-04-03",
+        "prazo_dias": 15,
+        "urgencia": "alta",
+        "status": "pendente",
+        "evento_calendar_id": "evt_abc123",
+        "criado_em": "2026-03-20T14:00:00-03:00"
+      }
+    ],
+    "documentos": [
+      {
+        "id": "doc-001",
+        "tipo_documento": "laudo_medico",
+        "nome_arquivo": "laudo_ortopedia_maria.pdf",
+        "drive_file_id": "1xYz...",
+        "pasta_categoria": "02 - Medicos",
+        "texto_extraido": true,
+        "metodo_extracao": "pytesseract",
+        "confianca_classificacao": 0.92,
+        "classificado_por": "claude_haiku",
+        "criado_em": "2026-03-24T10:30:00-03:00",
+        "enviado_por": "123456789"
+      }
+    ]
+  }
+}

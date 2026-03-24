@@ -1,0 +1,158 @@
+{
+  "name": "WF-04: Agendar Evento",
+  "nodes": [
+    {
+      "id": "node-01",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "position": [0, 0],
+      "parameters": {
+        "updates": ["message"]
+      },
+      "notas": "Filtra mensagens que começam com /agendar"
+    },
+    {
+      "id": "node-02",
+      "name": "Validar Comando",
+      "type": "n8n-nodes-base.if",
+      "position": [220, 0],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.message.text }}",
+              "operation": "startsWith",
+              "value2": "/agendar"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "node-03",
+      "name": "Pedir Dados",
+      "type": "n8n-nodes-base.telegram",
+      "position": [440, 0],
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "={{ $json.message.chat.id }}",
+        "text": "📅 *Agendar Evento*\n\nEnvie os dados no formato:\n\n`Título do evento\nData (DD/MM/AAAA)\nHorário (HH:MM)\nCliente (nome ou CPF)\nDescrição`\n\nExemplo:\n`Audiência Trabalhista\n15/04/2026\n14:00\nMaria da Silva\nAudiência de instrução na 5ª Vara`",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      }
+    },
+    {
+      "id": "node-04",
+      "name": "Aguardar Resposta",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "position": [660, 0],
+      "parameters": {
+        "updates": ["message"]
+      }
+    },
+    {
+      "id": "node-05",
+      "name": "Parsear Evento",
+      "type": "n8n-nodes-base.code",
+      "position": [880, 0],
+      "parameters": {
+        "jsCode": "const texto = $input.first().json.message.text;\nconst linhas = texto.split('\\n').map(l => l.trim()).filter(l => l);\n\nconst titulo = linhas[0] || '';\nconst dataStr = linhas[1] || '';\nconst horario = linhas[2] || '09:00';\nconst cliente = linhas[3] || '';\nconst descricao = linhas[4] || '';\n\n// Converte DD/MM/AAAA para AAAA-MM-DD\nlet dataISO = '';\nconst partes = dataStr.split('/');\nif (partes.length === 3) {\n  dataISO = partes[2] + '-' + partes[1] + '-' + partes[0];\n}\n\nconst inicio = dataISO + 'T' + horario + ':00-03:00';\n\n// Calcula fim: +1 hora\nconst [h, m] = horario.split(':').map(Number);\nconst fimH = String(h + 1).padStart(2, '0');\nconst fim = dataISO + 'T' + fimH + ':' + String(m).padStart(2, '0') + ':00-03:00';\n\nconst evento = {\n  titulo,\n  data: dataStr,\n  horario,\n  cliente,\n  descricao,\n  inicio,\n  fim,\n  data_valida: dataISO.length === 10,\n  criado_por: $input.first().json.message.from.id.toString(),\n  chat_id: $input.first().json.message.chat.id\n};\n\nreturn [{json: evento}];"
+      }
+    },
+    {
+      "id": "node-06",
+      "name": "Data Válida?",
+      "type": "n8n-nodes-base.if",
+      "position": [1100, 0],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.data_valida }}",
+              "value2": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "node-07",
+      "name": "Criar Evento Calendar",
+      "type": "n8n-nodes-base.googleCalendar",
+      "position": [1320, 0],
+      "parameters": {
+        "operation": "create",
+        "calendar": "primary",
+        "title": "={{ '⚖️ ' + $json.titulo }}",
+        "start": "={{ $json.inicio }}",
+        "end": "={{ $json.fim }}",
+        "additionalFields": {
+          "description": "={{ 'Cliente: ' + $json.cliente + '\\n' + $json.descricao + '\\n\\nCriado por: ' + $json.criado_por }}",
+          "reminders": {
+            "useDefault": false,
+            "overrides": [
+              {"method": "popup", "minutes": 1440},
+              {"method": "popup", "minutes": 60}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "node-08",
+      "name": "Registrar Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [1540, 0],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "sheetName": "PRAZOS",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ID": "={{ 'evt-' + Date.now() }}",
+            "DATA_LIMITE": "={{ $json.data }}",
+            "CLIENTE": "={{ $json.cliente }}",
+            "TIPO_ATO": "evento_manual",
+            "ACAO": "={{ $json.titulo }}",
+            "URGENCIA": "media",
+            "STATUS": "pendente",
+            "DETALHES": "={{ $json.descricao }}"
+          }
+        }
+      }
+    },
+    {
+      "id": "node-09",
+      "name": "Confirmar Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "position": [1760, 0],
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ '✅ Evento agendado!\\n\\n📅 ' + $json.titulo + '\\n🕐 ' + $json.data + ' às ' + $json.horario + '\\n👤 ' + $json.cliente + '\\n\\nLembretes: 1 dia antes e 1 hora antes.' }}"
+      }
+    },
+    {
+      "id": "node-10",
+      "name": "Erro Data",
+      "type": "n8n-nodes-base.telegram",
+      "position": [1320, 150],
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "❌ Data inválida. Use o formato DD/MM/AAAA.\n\nUse /agendar para tentar novamente."
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {"main": [["Validar Comando"]]},
+    "Validar Comando": {"main": [["Pedir Dados"]]},
+    "Pedir Dados": {"main": [["Aguardar Resposta"]]},
+    "Aguardar Resposta": {"main": [["Parsear Evento"]]},
+    "Parsear Evento": {"main": [["Data Válida?"]]},
+    "Data Válida?": {"main": [["Criar Evento Calendar"], ["Erro Data"]]},
+    "Criar Evento Calendar": {"main": [["Registrar Sheets"]]},
+    "Registrar Sheets": {"main": [["Confirmar Telegram"]]}
+  }
+}
