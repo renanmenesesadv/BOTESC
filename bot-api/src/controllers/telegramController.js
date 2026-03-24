@@ -1,9 +1,17 @@
 const express = require('express');
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 const { processDocument } = require('../services/geminiService');
 const { getOrCreateClientFolder, uploadFile } = require('../services/googleDriveService');
 const { upsertClient } = require('../services/googleSheetsService');
 const { findCliente, createCliente, updateCliente, getNextFileNumber } = require('../services/clienteService');
+
+// Carrega saudação do arquivo externo
+const greetingPath = path.join(__dirname, '../../../prompts/greeting_start.txt');
+const GREETING = fs.existsSync(greetingPath)
+  ? fs.readFileSync(greetingPath, 'utf-8')
+  : '👋 Olá! Envie uma foto ou PDF para classificar.';
 
 // Lógica de processamento separada (usada por HTTP e polling)
 function createProcessor(pool) {
@@ -165,7 +173,7 @@ function createProcessor(pool) {
             } else if (message.text) {
                 const text = message.text;
                 if (text === '/start') {
-                    await sendMessage(chatId, "👋 Olá! Sou o assistente de documentos do escritório.\n\nEnvie uma *foto* ou *PDF* e eu irei:\n📋 Classificar o documento\n👤 Identificar o cliente\n📂 Arquivar no Google Drive\n📊 Registrar na planilha");
+                    await sendMessage(chatId, GREETING);
                 } else {
                     await sendMessage(chatId, "📎 Por favor, me envie o documento em formato de *Imagem* ou *PDF* para que eu possa processá-lo.");
                 }

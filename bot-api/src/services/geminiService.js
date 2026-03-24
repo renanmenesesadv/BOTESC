@@ -1,29 +1,16 @@
 const { GoogleGenAI } = require('@google/genai');
 const Anthropic = require('@anthropic-ai/sdk');
+const fs = require('fs');
+const path = require('path');
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const PROMPT = `Você é um assistente jurídico de triagem de documentos de um escritório.
-Analise o documento enviado e extraia TODOS os dados possíveis.
-
-Retorne um JSON estruturado com as chaves exatas:
-- "tipo_documento": tipo do documento (ex: RG, CPF, CNH, Contrato, Nota Fiscal, Procuração, Comprovante de Residência, Certidão, etc)
-- "data_documento": data encontrada no documento no formato YYYY-MM-DD (ou null se não encontrar)
-- "descricao": breve resumo de 1 linha do conteúdo
-- "nome_sugerido": nome descritivo para o arquivo (ex: "RG_Joao_Silva", "Contrato_Locacao_Maria")
-
-Dados do CLIENTE (extraia tudo que encontrar no documento):
-- "nome_cliente": nome completo da pessoa principal do documento (null se não encontrar)
-- "cpf": CPF encontrado no formato 000.000.000-00 (null se não encontrar)
-- "rg": RG / identidade encontrado (null se não encontrar)
-- "telefone": telefone encontrado (null se não encontrar)
-- "email": email encontrado (null se não encontrar)
-- "endereco": endereço completo encontrado (null se não encontrar)
-
-IMPORTANTE: Extraia o máximo de informações possível. Se o documento for um RG, extraia nome e RG. Se for CPF, extraia nome e CPF. Se for um contrato, extraia nome, CPF, endereço, etc.
-
-Retorne APENAS o JSON válido.`;
+// Carrega prompt do arquivo externo (editável sem mexer no código)
+const promptPath = path.join(__dirname, '../../../prompts/classify_document.txt');
+const PROMPT = fs.existsSync(promptPath)
+  ? fs.readFileSync(promptPath, 'utf-8')
+  : 'Analise o documento e extraia dados em JSON.';
 
 // ── Tentativa 1: Gemini ──────────────────────────────────
 async function tryGemini(base64String, mimeType) {

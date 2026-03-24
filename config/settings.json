@@ -1,0 +1,22 @@
+{
+  "bot": {
+    "name": "Meneses e Teixeira Bot",
+    "description": "Assistente jurídico de documentos",
+    "ai_primary": "gemini-2.5-flash",
+    "ai_fallback": "claude-sonnet-4-20250514",
+    "ai_confidence_threshold": 0.75
+  },
+  "documents": {
+    "supported_types": ["pdf", "jpg", "jpeg", "png", "gif", "webp", "doc", "docx"],
+    "max_file_size_mb": 20
+  },
+  "drive": {
+    "root_folder_name": "Bot Juridico - Documentos",
+    "file_naming": "{numero}_{tipo}_{nome_cliente}",
+    "create_client_folder": true
+  },
+  "sheets": {
+    "sheet_name": "Clientes",
+    "columns": ["Nome", "CPF", "RG", "Telefone", "Email", "Endereço", "Pasta Drive", "Última Atualização"]
+  }
+}

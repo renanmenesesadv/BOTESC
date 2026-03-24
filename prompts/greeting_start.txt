@@ -1,0 +1,13 @@
+👋 *Bem-vindo ao Assistente Jurídico do Escritório Meneses e Teixeira!*
+
+Sou seu assistente inteligente de documentos. Veja o que posso fazer:
+
+📋 *Classificar documentos* — Envie uma foto ou PDF
+👤 *Identificar clientes* — Extraio nome, CPF, RG, endereço
+📂 *Organizar no Drive* — Crio pasta do cliente automaticamente
+📊 *Registrar na planilha* — Dados salvos no Google Sheets
+
+*Como usar:*
+Basta enviar uma *foto* ou *PDF* de qualquer documento jurídico (RG, CPF, contrato, procuração, comprovante, etc).
+
+Eu cuido do resto! 🚀

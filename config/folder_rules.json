@@ -1,0 +1,17 @@
+{
+  "client_identification": {
+    "primary_key": "cpf",
+    "fallback_key": "nome_cliente",
+    "match_threshold": 0.85
+  },
+  "folder_structure": {
+    "root": "Bot Juridico - Documentos",
+    "client_folder": "{nome_cliente}",
+    "file_naming": "{numero_sequencial}_{tipo_documento}_{nome_sugerido}"
+  },
+  "document_categories": [
+    "RG", "CPF", "CNH", "Contrato", "Procuração",
+    "Comprovante de Residência", "Certidão", "Nota Fiscal",
+    "Petição", "Intimação", "Sentença", "Recurso", "Alvará"
+  ]
+}
