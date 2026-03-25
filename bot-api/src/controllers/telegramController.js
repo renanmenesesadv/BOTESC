@@ -13,12 +13,20 @@ const GREETING = fs.existsSync(greetingPath)
   ? fs.readFileSync(greetingPath, 'utf-8')
   : '👋 Olá! Envie uma foto ou PDF para classificar.';
 
-const pendingDocs = new Map();
+const MAX_BATCH = 10;
+const MAX_FILE_SIZE_MB = 20;
+const BATCH_WAIT_MS = 5000; // espera 5s após último doc para fechar o lote
+
+// Estado por chat
+const pendingDocs = new Map();    // doc único aguardando seleção de cliente
+const batchBuffer = new Map();    // lote acumulando arquivos
+const batchTimers = new Map();    // timers de fechamento do lote
 
 function createProcessor(pool) {
     const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
     const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
 
+    // ── Helpers ──────────────────────────────────────────────
     const sendMessage = async (chatId, text, extra = {}) => {
         try {
             await axios.post(`${TELEGRAM_API}/sendMessage`, {
@@ -52,86 +60,202 @@ function createProcessor(pool) {
         return { base64Data, mimeType };
     };
 
-    // ── Finalizar: upload + banco + planilha + confirmação ──
-    async function finalizarDocumento(chatId, remetenteNumero, remetenteNome, pending, clienteNome) {
-        const { aiResult, base64Data, mimeType, fileName } = pending;
-        const user = getUser(remetenteNumero);
-
-        if (!user) {
-            await sendMessage(chatId, "❌ Você não está registrado. Use /start para se registrar.");
-            return;
-        }
-
-        let cliente, clienteStatus;
+    // ── Finalizar um documento (upload + banco + planilha) ──
+    async function finalizarUmDocumento(chatId, remetenteNumero, remetenteNome, docData, clienteNome, user) {
+        const { aiResult, base64Data, mimeType, fileName } = docData;
         const clientName = clienteNome || aiResult.nome_cliente || remetenteNome;
 
-        // Buscar ou criar cliente
+        let cliente, clienteStatus;
         const clienteExistente = await findCliente(pool, { nome_cliente: clientName, cpf: aiResult.cpf });
+
         if (clienteExistente) {
             cliente = clienteExistente;
             clienteStatus = 'existente';
             await updateCliente(pool, cliente.id, aiResult);
         } else {
             clienteStatus = 'novo';
-            // Criar pasta do cliente dentro de Clientes/ do usuário
             const clientesFolderId = await getSubfolderInUserFolder(user.drive_folder_id, 'Clientes');
             const clientFolder = await getOrCreateClientFolder(clientName, null, clientesFolderId);
             cliente = await createCliente(pool, { ...aiResult, nome_cliente: clientName }, clientFolder.id, clientFolder.webViewLink);
         }
 
-        // Determinar subpasta pelo tipo de documento
         const tipoDoc = aiResult.tipo_documento || 'Outro';
         const subfolderName = getSubfolder(tipoDoc);
         const targetFolderId = await getSubfolderInUserFolder(user.drive_folder_id, subfolderName);
 
-        // Nome do arquivo: NNN_Tipo_NomeCliente
         const nextNum = await getNextFileNumber(pool, cliente.id);
         const numStr = String(nextNum).padStart(3, '0');
         const cleanName = clientName.replace(/[^\w\s]/g, '').replace(/\s+/g, '_').substring(0, 30);
         const cleanType = tipoDoc.replace(/\s+/g, '_');
         const finalFileName = `${numStr}_${cleanType}_${cleanName}`;
 
-        // Upload
         const fileResult = await uploadFile(targetFolderId, finalFileName, base64Data, mimeType);
 
-        // Salvar no banco
         await pool.query(
             `INSERT INTO documentos (cliente_id, remetente_numero, remetente_nome, nome_arquivo_original, nome_arquivo_salvo, tipo_documento, descricao_gemini, link_drive, pasta_drive, numero_arquivo, status)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
             [cliente.id, remetenteNumero, remetenteNome, fileName, fileResult.name, tipoDoc, aiResult.descricao, fileResult.webViewLink, targetFolderId, nextNum, 'processado']
         );
 
-        // Planilha
         try {
             await upsertClient({ nome: clientName, cpf: aiResult.cpf, rg: aiResult.rg, telefone: aiResult.telefone, email: aiResult.email, endereco: aiResult.endereco }, fileResult.webViewLink);
         } catch (e) { console.error('[!] Erro planilha:', e.message); }
 
-        // ── Mensagem de confirmação detalhada ──
-        const statusEmoji = clienteStatus === 'novo' ? '🆕 Cliente Novo — Pasta criada' : '🔄 Cliente Existente';
-        const lines = [
-            `✅ *Documento Salvo com Sucesso!*`,
-            ``,
-            `👤 *Cliente:* ${clientName}`,
-            `${statusEmoji}`,
-            ``,
-            `📋 *Detalhes do documento:*`,
-            `📁 Tipo: *${tipoDoc}*`,
-            `🗂 Descrição: ${aiResult.descricao || '—'}`,
-            `📅 Data: ${aiResult.data_documento || '—'}`,
-            ``,
-            `💾 *Arquivo salvo como:*`,
-            `\`${fileResult.name}\``,
-            `📂 Pasta: *${user.nome} → ${subfolderName}*`,
-        ];
-        if (aiResult.cpf) lines.push(`🪪 CPF: ${aiResult.cpf}`);
-        if (aiResult.rg) lines.push(`🪪 RG: ${aiResult.rg}`);
-        if (aiResult.endereco) lines.push(`📍 Endereço: ${aiResult.endereco}`);
-        if (fileResult.webViewLink) {
-            lines.push(``, `🔗 [Abrir no Google Drive](${fileResult.webViewLink})`);
+        return {
+            clientName, clienteStatus, tipoDoc, subfolderName,
+            descricao: aiResult.descricao, dataDoc: aiResult.data_documento,
+            fileName: fileResult.name, link: fileResult.webViewLink,
+            cpf: aiResult.cpf, rg: aiResult.rg, endereco: aiResult.endereco
+        };
+    }
+
+    // ── Finalizar doc único (mantém fluxo existente) ────────
+    async function finalizarDocumento(chatId, remetenteNumero, remetenteNome, pending, clienteNome) {
+        const user = getUser(remetenteNumero);
+        if (!user) return await sendMessage(chatId, "❌ Você não está registrado. Use /start para se registrar.");
+
+        const result = await finalizarUmDocumento(chatId, remetenteNumero, remetenteNome, pending, clienteNome, user);
+        await enviarConfirmacao(chatId, [result], user);
+        pendingDocs.delete(chatId);
+    }
+
+    // ── Finalizar lote inteiro ──────────────────────────────
+    async function finalizarLote(chatId, remetenteNumero, remetenteNome, docs, clienteNome) {
+        const user = getUser(remetenteNumero);
+        if (!user) return await sendMessage(chatId, "❌ Você não está registrado. Use /start para se registrar.");
+
+        await sendMessage(chatId, `⏳ _Processando ${docs.length} documento(s)..._`);
+
+        const resultados = [];
+        for (let i = 0; i < docs.length; i++) {
+            try {
+                console.log(`[+] Lote: processando ${i + 1}/${docs.length}: ${docs[i].fileName}`);
+                const r = await finalizarUmDocumento(chatId, remetenteNumero, remetenteNome, docs[i], clienteNome, user);
+                resultados.push(r);
+            } catch (err) {
+                console.error(`[!] Erro no doc ${i + 1}:`, err.message);
+                resultados.push({ fileName: docs[i].fileName, tipoDoc: 'Erro', descricao: err.message, link: null });
+            }
         }
 
-        await sendMessage(chatId, lines.join('\n'));
+        await enviarConfirmacao(chatId, resultados, user);
+        batchBuffer.delete(chatId);
         pendingDocs.delete(chatId);
+    }
+
+    // ── Mensagem de confirmação (1 ou vários) ───────────────
+    async function enviarConfirmacao(chatId, resultados, user) {
+        if (resultados.length === 1) {
+            const r = resultados[0];
+            const statusEmoji = r.clienteStatus === 'novo' ? '🆕 Cliente Novo — Pasta criada' : '🔄 Cliente Existente';
+            const lines = [
+                `✅ *Documento Salvo com Sucesso!*`,
+                ``,
+                `👤 *Cliente:* ${r.clientName}`,
+                `${statusEmoji}`,
+                ``,
+                `📋 *Detalhes do documento:*`,
+                `📁 Tipo: *${r.tipoDoc}*`,
+                `🗂 Descrição: ${r.descricao || '—'}`,
+                `📅 Data: ${r.dataDoc || '—'}`,
+                ``,
+                `💾 *Arquivo salvo como:*`,
+                `\`${r.fileName}\``,
+                `📂 Pasta: *${user.nome} → ${r.subfolderName}*`,
+            ];
+            if (r.cpf) lines.push(`🪪 CPF: ${r.cpf}`);
+            if (r.rg) lines.push(`🪪 RG: ${r.rg}`);
+            if (r.endereco) lines.push(`📍 Endereço: ${r.endereco}`);
+            if (r.link) lines.push(``, `🔗 [Abrir no Google Drive](${r.link})`);
+            await sendMessage(chatId, lines.join('\n'));
+        } else {
+            // Resumo do lote
+            const lines = [
+                `✅ *${resultados.length} Documentos Salvos com Sucesso!*`,
+                `👤 *Cliente:* ${resultados[0]?.clientName || '—'}`,
+                `📂 *Pasta:* ${user.nome}`,
+                ``,
+            ];
+
+            for (let i = 0; i < resultados.length; i++) {
+                const r = resultados[i];
+                if (r.link) {
+                    lines.push(`${i + 1}. *${r.tipoDoc}* — \`${r.fileName}\``);
+                    lines.push(`   🗂 ${r.descricao || '—'} — [Drive](${r.link})`);
+                } else {
+                    lines.push(`${i + 1}. ❌ *${r.tipoDoc}* — ${r.descricao}`);
+                }
+            }
+
+            await sendMessage(chatId, lines.join('\n'));
+        }
+    }
+
+    // ── Fechar o lote e perguntar cliente ────────────────────
+    async function fecharLote(chatId, remetenteNumero, remetenteNome) {
+        const batch = batchBuffer.get(chatId);
+        if (!batch || batch.docs.length === 0) return;
+
+        console.log(`[+] Lote fechado: ${batch.docs.length} doc(s) de ${remetenteNome}`);
+
+        // Verificar se algum doc tem cliente identificado
+        let clienteEncontrado = null;
+        let nomeIA = null;
+        let cpfIA = null;
+
+        for (const doc of batch.docs) {
+            if (doc.aiResult.nome_cliente) nomeIA = doc.aiResult.nome_cliente;
+            if (doc.aiResult.cpf) cpfIA = doc.aiResult.cpf;
+        }
+
+        if (nomeIA || cpfIA) {
+            clienteEncontrado = await findCliente(pool, { nome_cliente: nomeIA, cpf: cpfIA });
+        }
+
+        if (clienteEncontrado) {
+            // Auto-identificou — processa direto
+            console.log(`[+] Lote: cliente auto-identificado: ${clienteEncontrado.nome}`);
+            await finalizarLote(chatId, remetenteNumero, remetenteNome, batch.docs, clienteEncontrado.nome);
+        } else {
+            // Perguntar ao usuário
+            pendingDocs.set(chatId, {
+                isLote: true,
+                docs: batch.docs,
+                remetenteNumero,
+                remetenteNome
+            });
+
+            const buttons = [];
+
+            if (nomeIA) {
+                buttons.push([{ text: `🆕 Criar pasta: ${nomeIA}`, callback_data: 'lote_novo' }]);
+                const similar = await findClientesSimilares(pool, nomeIA, 3);
+                for (const c of similar) {
+                    const label = c.cpf ? `${c.nome} (${c.cpf})` : c.nome;
+                    buttons.push([{ text: `📂 Existente: ${label}`, callback_data: `lote_cliente_${c.id}` }]);
+                }
+            } else {
+                buttons.push([{ text: '🆕 Cadastrar cliente novo', callback_data: 'lote_novo' }]);
+            }
+
+            const info = [
+                `📦 *${batch.docs.length} documento(s) recebido(s):*`,
+                ``,
+            ];
+            for (let i = 0; i < batch.docs.length; i++) {
+                const d = batch.docs[i];
+                info.push(`${i + 1}. *${d.aiResult.tipo_documento || '—'}* — ${d.fileName}`);
+            }
+            if (nomeIA) info.push(``, `👤 Nome encontrado: *${nomeIA}*`);
+            if (cpfIA) info.push(`🪪 CPF: ${cpfIA}`);
+            info.push('', '👇 *A quem pertencem estes documentos?*');
+
+            await sendMessage(chatId, info.join('\n'), {
+                reply_markup: JSON.stringify({ inline_keyboard: buttons })
+            });
+        }
+
+        batchBuffer.delete(chatId);
     }
 
     // ── Processar update ────────────────────────────────────
@@ -166,6 +290,32 @@ function createProcessor(pool) {
                 }
 
                 await answerCallback(cb.id, 'Processando...');
+
+                // ── Callbacks de LOTE ─────────────────────────
+                if (pendingDoc.isLote) {
+                    if (data === 'lote_novo') {
+                        // Verificar se algum doc tem nome
+                        let nomeIA = null;
+                        for (const d of pendingDoc.docs) {
+                            if (d.aiResult.nome_cliente) { nomeIA = d.aiResult.nome_cliente; break; }
+                        }
+                        if (nomeIA) {
+                            await finalizarLote(chatId, pendingDoc.remetenteNumero, pendingDoc.remetenteNome, pendingDoc.docs, nomeIA);
+                        } else {
+                            pendingDoc.waitingForName = true;
+                            pendingDocs.set(chatId, pendingDoc);
+                            await sendMessage(chatId, "✏️ *Digite o nome completo do cliente:*");
+                        }
+                    } else if (data.startsWith('lote_cliente_')) {
+                        const clienteId = data.replace('lote_cliente_', '');
+                        const result = await pool.query('SELECT nome FROM clientes WHERE id = $1', [clienteId]);
+                        const nome = result.rows[0]?.nome;
+                        await finalizarLote(chatId, pendingDoc.remetenteNumero, pendingDoc.remetenteNome, pendingDoc.docs, nome);
+                    }
+                    return;
+                }
+
+                // ── Callbacks de doc único ────────────────────
                 await sendMessage(chatId, '⏳ _Salvando documento..._');
 
                 if (data === 'cliente_novo') {
@@ -191,97 +341,110 @@ function createProcessor(pool) {
             const chatId = message.chat.id;
             const remetenteNumero = message.from.id.toString();
             const remetenteNome = message.from.first_name || message.from.username || 'Desconhecido';
-
-            // Verificar se usuário está registrado
             const user = getUser(remetenteNumero);
 
             let fileId = null;
             let fileName = 'documento_telegram';
+            let fileSize = 0;
 
             if (message.document) {
                 fileId = message.document.file_id;
                 fileName = message.document.file_name || fileName;
+                fileSize = message.document.file_size || 0;
             } else if (message.photo && message.photo.length > 0) {
-                fileId = message.photo[message.photo.length - 1].file_id;
+                const photo = message.photo[message.photo.length - 1];
+                fileId = photo.file_id;
                 fileName = `foto_${Date.now()}.jpg`;
+                fileSize = photo.file_size || 0;
             }
 
             // ── Documento recebido ──────────────────────────
             if (fileId) {
                 if (!user) {
-                    await sendMessage(chatId, "⚠️ Você ainda não está registrado. Use /start para se identificar primeiro.");
-                    return;
+                    return await sendMessage(chatId, "⚠️ Você ainda não está registrado. Use /start para se identificar primeiro.");
                 }
 
-                console.log(`[+] Documento de ${user.nome}: ${fileName}`);
-                await sendMessage(chatId, `⏳ _Recebido, ${user.nome}! Analisando documento..._`);
+                // Verificar tamanho
+                const sizeMB = fileSize / (1024 * 1024);
+                if (sizeMB > MAX_FILE_SIZE_MB) {
+                    return await sendMessage(chatId, `❌ Arquivo muito grande (${sizeMB.toFixed(1)}MB). Máximo: ${MAX_FILE_SIZE_MB}MB.`);
+                }
 
+                // Baixar e analisar com IA
                 const fileUrl = await getFileUrl(fileId);
                 if (!fileUrl) return await sendMessage(chatId, "❌ Erro ao baixar o arquivo.");
 
                 const { base64Data, mimeType } = await downloadFileAsBase64(fileUrl, fileName);
-                console.log(`[+] MIME: ${mimeType}, Tamanho: ${Math.round(base64Data.length/1024)}KB`);
+                console.log(`[+] Recebido de ${user.nome}: ${fileName} (${Math.round(base64Data.length/1024)}KB)`);
 
                 const aiResult = await processDocument(base64Data, mimeType, fileName);
-                console.log('[+] IA resultado:', JSON.stringify(aiResult));
+                console.log('[+] IA resultado:', JSON.stringify(aiResult).substring(0, 200));
 
-                // Buscar cliente automaticamente
-                let clienteEncontrado = await findCliente(pool, aiResult);
+                const docData = { aiResult, base64Data, mimeType, fileName, remetenteNumero, remetenteNome };
 
-                if (clienteEncontrado) {
-                    console.log(`[+] Cliente auto-identificado: ${clienteEncontrado.nome}`);
-                    await sendMessage(chatId, `⏳ _Cliente identificado: *${clienteEncontrado.nome}*. Salvando..._`);
-                    await finalizarDocumento(chatId, remetenteNumero, remetenteNome,
-                        { aiResult, base64Data, mimeType, fileName, remetenteNumero, remetenteNome },
-                        clienteEncontrado.nome);
-                } else {
-                    // Perguntar ao usuário — só "criar novo" e possível match parcial
-                    pendingDocs.set(chatId, { aiResult, base64Data, mimeType, fileName, remetenteNumero, remetenteNome });
+                // ── Acumular no lote ────────────────────────
+                let batch = batchBuffer.get(chatId);
 
-                    const buttons = [];
-                    const clientNameIA = aiResult.nome_cliente || null;
-
-                    // Botão de criar novo
-                    if (clientNameIA) {
-                        buttons.push([{ text: `🆕 Criar pasta: ${clientNameIA}`, callback_data: 'cliente_novo' }]);
-                    } else {
-                        buttons.push([{ text: '🆕 Cadastrar cliente novo', callback_data: 'cliente_novo' }]);
-                    }
-
-                    // Buscar APENAS matches parciais (nome similar) — sem listar todo o histórico
-                    if (clientNameIA) {
-                        const similar = await findClientesSimilares(pool, clientNameIA, 3);
-                        for (const c of similar) {
-                            const label = c.cpf ? `${c.nome} (${c.cpf})` : c.nome;
-                            buttons.push([{ text: `📂 Existente: ${label}`, callback_data: `cliente_${c.id}` }]);
-                        }
-                    }
-
-                    const info = [
-                        `📋 *Documento analisado:*`,
-                        `📁 Tipo: *${aiResult.tipo_documento || '—'}*`,
-                        `🗂 ${aiResult.descricao || '—'}`,
-                    ];
-                    if (clientNameIA) info.push(`👤 Nome encontrado: *${clientNameIA}*`);
-                    if (aiResult.cpf) info.push(`🪪 CPF: ${aiResult.cpf}`);
-                    info.push('', '👇 *A quem pertence este documento?*');
-
-                    await sendMessage(chatId, info.join('\n'), {
-                        reply_markup: JSON.stringify({ inline_keyboard: buttons })
-                    });
+                if (!batch) {
+                    batch = { docs: [], remetenteNumero, remetenteNome };
+                    batchBuffer.set(chatId, batch);
                 }
 
-            } else if (message.text) {
+                if (batch.docs.length >= MAX_BATCH) {
+                    return await sendMessage(chatId, `⚠️ Limite de ${MAX_BATCH} documentos por lote atingido. Aguarde o processamento.`);
+                }
+
+                batch.docs.push(docData);
+                const count = batch.docs.length;
+
+                // Cancelar timer anterior
+                if (batchTimers.has(chatId)) {
+                    clearTimeout(batchTimers.get(chatId));
+                }
+
+                // Notificar quantos docs acumulados
+                if (count === 1) {
+                    await sendMessage(chatId, `📄 _1 documento recebido (${aiResult.tipo_documento || '—'}). Envie mais ou aguarde 5s para processar._`);
+                } else {
+                    await sendMessage(chatId, `📄 _${count} documentos no lote (máx. ${MAX_BATCH}). Envie mais ou aguarde 5s._`);
+                }
+
+                // Timer: se não receber mais docs em 5s, fecha o lote
+                const timer = setTimeout(() => {
+                    batchTimers.delete(chatId);
+                    if (batch.docs.length === 1) {
+                        // Lote com 1 doc: usa fluxo normal
+                        const singleDoc = batch.docs[0];
+                        batchBuffer.delete(chatId);
+                        handleSingleDoc(chatId, remetenteNumero, remetenteNome, singleDoc);
+                    } else {
+                        fecharLote(chatId, remetenteNumero, remetenteNome);
+                    }
+                }, BATCH_WAIT_MS);
+
+                batchTimers.set(chatId, timer);
+                return;
+            }
+
+            // ── Texto ───────────────────────────────────────
+            if (message.text) {
                 const text = message.text;
 
-                // Esperando nome do cliente
+                // Esperando nome do cliente (lote ou doc único)
                 const pendingDoc = pendingDocs.get(chatId);
                 if (pendingDoc && pendingDoc.waitingForName && !text.startsWith('/')) {
                     const nomeDigitado = text.trim();
-                    pendingDoc.aiResult.nome_cliente = nomeDigitado;
-                    pendingDoc.waitingForName = false;
-                    await sendMessage(chatId, `⏳ _Criando pasta para *${nomeDigitado}* e salvando..._`);
-                    await finalizarDocumento(chatId, pendingDoc.remetenteNumero, pendingDoc.remetenteNome, pendingDoc, null);
+
+                    if (pendingDoc.isLote) {
+                        for (const d of pendingDoc.docs) d.aiResult.nome_cliente = nomeDigitado;
+                        await sendMessage(chatId, `⏳ _Criando pasta para *${nomeDigitado}* e salvando ${pendingDoc.docs.length} documento(s)..._`);
+                        await finalizarLote(chatId, pendingDoc.remetenteNumero, pendingDoc.remetenteNome, pendingDoc.docs, nomeDigitado);
+                    } else {
+                        pendingDoc.aiResult.nome_cliente = nomeDigitado;
+                        pendingDoc.waitingForName = false;
+                        await sendMessage(chatId, `⏳ _Criando pasta para *${nomeDigitado}* e salvando..._`);
+                        await finalizarDocumento(chatId, pendingDoc.remetenteNumero, pendingDoc.remetenteNome, pendingDoc, null);
+                    }
                     return;
                 }
 
@@ -289,13 +452,11 @@ function createProcessor(pool) {
                     if (user) {
                         await sendMessage(chatId, `👋 *Olá, ${user.nome}!*\n\n${GREETING}`);
                     } else {
-                        // Registro: mostrar botões com usuários pendentes
                         const pending = getPendingUsers();
                         const names = Object.entries(pending);
 
                         if (names.length === 0) {
-                            await sendMessage(chatId, "⚠️ Não há vagas de registro disponíveis. Contate o administrador.");
-                            return;
+                            return await sendMessage(chatId, "⚠️ Não há vagas de registro disponíveis. Contate o administrador.");
                         }
 
                         const buttons = names.map(([name, folderId]) => ([
@@ -307,12 +468,53 @@ function createProcessor(pool) {
                         });
                     }
                 } else {
-                    await sendMessage(chatId, "📎 Envie um documento em formato de *Imagem* ou *PDF* para processá-lo.");
+                    await sendMessage(chatId, "📎 Envie um documento em formato de *Imagem* ou *PDF* para processá-lo.\n\n📦 Pode enviar até *10 de uma vez* — eu processo todos juntos!");
                 }
             }
 
         } catch (error) {
             console.error('Erro:', error.message, error.stack);
+        }
+    }
+
+    // ── Doc único: buscar cliente ou perguntar ──────────────
+    async function handleSingleDoc(chatId, remetenteNumero, remetenteNome, docData) {
+        const { aiResult } = docData;
+        let clienteEncontrado = await findCliente(pool, aiResult);
+
+        if (clienteEncontrado) {
+            console.log(`[+] Cliente auto-identificado: ${clienteEncontrado.nome}`);
+            await sendMessage(chatId, `⏳ _Cliente identificado: *${clienteEncontrado.nome}*. Salvando..._`);
+            await finalizarDocumento(chatId, remetenteNumero, remetenteNome, docData, clienteEncontrado.nome);
+        } else {
+            pendingDocs.set(chatId, { ...docData, remetenteNumero, remetenteNome });
+
+            const buttons = [];
+            const clientNameIA = aiResult.nome_cliente || null;
+
+            if (clientNameIA) {
+                buttons.push([{ text: `🆕 Criar pasta: ${clientNameIA}`, callback_data: 'cliente_novo' }]);
+                const similar = await findClientesSimilares(pool, clientNameIA, 3);
+                for (const c of similar) {
+                    const label = c.cpf ? `${c.nome} (${c.cpf})` : c.nome;
+                    buttons.push([{ text: `📂 Existente: ${label}`, callback_data: `cliente_${c.id}` }]);
+                }
+            } else {
+                buttons.push([{ text: '🆕 Cadastrar cliente novo', callback_data: 'cliente_novo' }]);
+            }
+
+            const info = [
+                `📋 *Documento analisado:*`,
+                `📁 Tipo: *${aiResult.tipo_documento || '—'}*`,
+                `🗂 ${aiResult.descricao || '—'}`,
+            ];
+            if (clientNameIA) info.push(`👤 Nome encontrado: *${clientNameIA}*`);
+            if (aiResult.cpf) info.push(`🪪 CPF: ${aiResult.cpf}`);
+            info.push('', '👇 *A quem pertence este documento?*');
+
+            await sendMessage(chatId, info.join('\n'), {
+                reply_markup: JSON.stringify({ inline_keyboard: buttons })
+            });
         }
     }
 
