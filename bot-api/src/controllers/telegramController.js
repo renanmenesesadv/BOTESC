@@ -5,7 +5,7 @@ const path = require('path');
 const { processDocument } = require('../services/geminiService');
 const { getOrCreateClientFolder, uploadFile, getSubfolderInUserFolder } = require('../services/googleDriveService');
 const { upsertClient } = require('../services/googleSheetsService');
-const { findCliente, createCliente, updateCliente, getNextFileNumber, listClientes } = require('../services/clienteService');
+const { findCliente, createCliente, updateCliente, getNextFileNumber, findClientesSimilares } = require('../services/clienteService');
 const { getUser, registerUser, getPendingUsers, getSubfolder } = require('../services/userService');
 
 const greetingPath = path.join(__dirname, '../../../prompts/greeting_start.txt');
@@ -235,22 +235,26 @@ function createProcessor(pool) {
                         { aiResult, base64Data, mimeType, fileName, remetenteNumero, remetenteNome },
                         clienteEncontrado.nome);
                 } else {
-                    // Perguntar ao usuário
+                    // Perguntar ao usuário — só "criar novo" e possível match parcial
                     pendingDocs.set(chatId, { aiResult, base64Data, mimeType, fileName, remetenteNumero, remetenteNome });
 
-                    const clientes = await listClientes(pool, 8);
                     const buttons = [];
                     const clientNameIA = aiResult.nome_cliente || null;
 
+                    // Botão de criar novo
                     if (clientNameIA) {
-                        buttons.push([{ text: `🆕 Criar: ${clientNameIA}`, callback_data: 'cliente_novo' }]);
+                        buttons.push([{ text: `🆕 Criar pasta: ${clientNameIA}`, callback_data: 'cliente_novo' }]);
                     } else {
                         buttons.push([{ text: '🆕 Cadastrar cliente novo', callback_data: 'cliente_novo' }]);
                     }
 
-                    for (const c of clientes) {
-                        const label = c.cpf ? `${c.nome} (${c.cpf})` : c.nome;
-                        buttons.push([{ text: `📂 ${label}`, callback_data: `cliente_${c.id}` }]);
+                    // Buscar APENAS matches parciais (nome similar) — sem listar todo o histórico
+                    if (clientNameIA) {
+                        const similar = await findClientesSimilares(pool, clientNameIA, 3);
+                        for (const c of similar) {
+                            const label = c.cpf ? `${c.nome} (${c.cpf})` : c.nome;
+                            buttons.push([{ text: `📂 Existente: ${label}`, callback_data: `cliente_${c.id}` }]);
+                        }
                     }
 
                     const info = [

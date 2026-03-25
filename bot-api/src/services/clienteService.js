@@ -85,11 +85,20 @@ async function getNextFileNumber(pool, clienteId) {
   return res.rows[0].proximo;
 }
 
-// ── Listar últimos clientes (para botões de seleção) ────
-async function listClientes(pool, limit = 8) {
+// ── Buscar clientes com nome similar (match parcial) ────
+async function findClientesSimilares(pool, nome, limit = 3) {
+  if (!nome || nome.length < 3) return [];
+  const partes = nome.trim().split(/\s+/);
+  // Busca por qualquer parte do nome (primeiro nome ou sobrenome)
+  const conditions = partes
+    .filter(p => p.length >= 3)
+    .map((_, i) => `LOWER(nome) LIKE LOWER($${i + 1})`)
+    .join(' OR ');
+  if (!conditions) return [];
+  const values = partes.filter(p => p.length >= 3).map(p => `%${p}%`);
   const res = await pool.query(
-    `SELECT id, nome, cpf FROM clientes ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT $1`,
-    [limit]
+    `SELECT id, nome, cpf FROM clientes WHERE ${conditions} ORDER BY atualizado_em DESC NULLS LAST LIMIT $${values.length + 1}`,
+    [...values, limit]
   );
   return res.rows;
 }
@@ -99,5 +108,5 @@ module.exports = {
   createCliente,
   updateCliente,
   getNextFileNumber,
-  listClientes
+  findClientesSimilares
 };
