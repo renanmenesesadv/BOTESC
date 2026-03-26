@@ -8,6 +8,16 @@ const { upsertClient } = require('../services/googleSheetsService');
 const { findCliente, createCliente, updateCliente, getNextFileNumber, findClientesSimilares } = require('../services/clienteService');
 const { getUser, registerUser, getPendingUsers } = require('../services/userService');
 const { chat } = require('../services/chatService');
+const {
+  interpretIntent,
+  getContext,
+  addAssistantResponse,
+  setPastaAtiva,
+  setSubpastaAtiva,
+  setClienteAtivo,
+  getTargetFolderId,
+  getDestinoLabel,
+} = require('../services/assistenteService');
 
 const greetingPath = path.join(__dirname, '../../../prompts/greeting_start.txt');
 const GREETING = fs.existsSync(greetingPath)
@@ -60,7 +70,7 @@ function createProcessor(pool) {
     };
 
     // ── Finalizar um documento: pasta do cliente → upload direto ──
-    async function finalizarUmDocumento(remetenteNumero, remetenteNome, docData, clienteNome) {
+    async function finalizarUmDocumento(remetenteNumero, remetenteNome, docData, clienteNome, chatId) {
         const { aiResult, base64Data, mimeType, fileName } = docData;
         const clientName = clienteNome || aiResult.nome_cliente || remetenteNome;
 
@@ -78,7 +88,10 @@ function createProcessor(pool) {
         }
 
         const tipoDoc = aiResult.tipo_documento || 'Outro';
-        const clientFolderId = cliente.drive_folder_id;
+
+        // Usar pasta ativa do contexto se disponível, senão pasta do cliente
+        const contextFolderId = chatId ? getTargetFolderId(chatId) : null;
+        const clientFolderId = contextFolderId || cliente.drive_folder_id;
 
         const nextNum = await getNextFileNumber(pool, cliente.id);
         const numStr = String(nextNum).padStart(3, '0');
@@ -108,7 +121,7 @@ function createProcessor(pool) {
 
     // ── Finalizar doc único ─────────────────────────────────
     async function finalizarDocumento(chatId, remetenteNumero, remetenteNome, pending, clienteNome) {
-        const result = await finalizarUmDocumento(remetenteNumero, remetenteNome, pending, clienteNome);
+        const result = await finalizarUmDocumento(remetenteNumero, remetenteNome, pending, clienteNome, chatId);
         await enviarConfirmacao(chatId, [result]);
         pendingDocs.delete(chatId);
     }
@@ -121,7 +134,7 @@ function createProcessor(pool) {
         for (let i = 0; i < docs.length; i++) {
             try {
                 console.log(`[+] Lote: processando ${i + 1}/${docs.length}: ${docs[i].fileName}`);
-                const r = await finalizarUmDocumento(remetenteNumero, remetenteNome, docs[i], clienteNome);
+                const r = await finalizarUmDocumento(remetenteNumero, remetenteNome, docs[i], clienteNome, chatId);
                 resultados.push(r);
             } catch (err) {
                 console.error(`[!] Erro no doc ${i + 1}:`, err.message);
@@ -136,6 +149,8 @@ function createProcessor(pool) {
 
     // ── Confirmação (1 ou vários docs) ──────────────────────
     async function enviarConfirmacao(chatId, resultados) {
+        const destino = getDestinoLabel(chatId);
+
         if (resultados.length === 1) {
             const r = resultados[0];
             const statusEmoji = r.clienteStatus === 'novo' ? '🆕 Cliente Novo — Pasta criada' : '🔄 Cliente Existente';
@@ -150,6 +165,7 @@ function createProcessor(pool) {
                 `📅 Data: ${r.dataDoc || '—'}`,
                 `💾 Arquivo: \`${r.fileName}\``,
             ];
+            if (destino) lines.push(`📂 *Salvo em:* ${destino}`);
             if (r.cpf) lines.push(`🪪 CPF: ${r.cpf}`);
             if (r.rg) lines.push(`🪪 RG: ${r.rg}`);
             if (r.link) lines.push(``, `🔗 [Abrir no Google Drive](${r.link})`);
@@ -334,6 +350,12 @@ function createProcessor(pool) {
                     return await sendMessage(chatId, `❌ Arquivo muito grande (${sizeMB.toFixed(1)}MB). Máximo: ${MAX_FILE_SIZE_MB}MB.`);
                 }
 
+                // Informar destino se houver pasta ativa no contexto
+                const destinoLabel = getDestinoLabel(chatId);
+                if (destinoLabel) {
+                    console.log(`[assistente] Documento será salvo em: ${destinoLabel}`);
+                }
+
                 const fileUrl = await getFileUrl(fileId);
                 if (!fileUrl) return await sendMessage(chatId, "❌ Erro ao baixar o arquivo.");
 
@@ -361,10 +383,11 @@ function createProcessor(pool) {
 
                 if (batchTimers.has(chatId)) clearTimeout(batchTimers.get(chatId));
 
+                const destinoMsg = destinoLabel ? ` Destino: *${destinoLabel}*.` : '';
                 if (count === 1) {
-                    await sendMessage(chatId, `📄 _1 documento recebido (${aiResult.tipo_documento || '—'}). Envie mais ou aguarde 5s para processar._`);
+                    await sendMessage(chatId, `📄 _1 documento recebido (${aiResult.tipo_documento || '—'}).${destinoMsg} Envie mais ou aguarde 5s para processar._`);
                 } else {
-                    await sendMessage(chatId, `📄 _${count} documentos no lote (máx. ${MAX_BATCH}). Envie mais ou aguarde 5s._`);
+                    await sendMessage(chatId, `📄 _${count} documentos no lote (máx. ${MAX_BATCH}).${destinoMsg} Envie mais ou aguarde 5s._`);
                 }
 
                 const timer = setTimeout(() => {
@@ -420,14 +443,151 @@ function createProcessor(pool) {
                         });
                     }
                 } else {
-                    // Chat inteligente com Claude
+                    // Assistente inteligente — interpreta intenção
                     try {
                         await axios.post(`${TELEGRAM_API}/sendChatAction`, { chat_id: chatId, action: 'typing' });
-                        const reply = await chat(chatId, text);
-                        await sendMessage(chatId, reply);
+
+                        const intent = await interpretIntent(text, chatId);
+                        const intencao = intent.intencao || 'conversa_geral';
+                        const campos = intent.campos || {};
+                        let resposta = intent.resposta_sugerida || null;
+
+                        console.log(`[assistente] Chat ${chatId}: intencao=${intencao}, campos=${JSON.stringify(campos)}`);
+
+                        if (intencao === 'criar_pasta') {
+                            const nomePasta = (campos.nome_pasta || '').trim();
+                            if (!nomePasta) {
+                                await sendMessage(chatId, 'Qual nome deseja dar para a pasta?');
+                            } else {
+                                try {
+                                    const folder = await getOrCreateClientFolder(nomePasta, null, null);
+                                    setPastaAtiva(chatId, nomePasta, folder.id);
+                                    let msg = `Pasta *'${nomePasta}'* criada com sucesso.`;
+                                    if (folder.webViewLink) msg += `\n🔗 [Abrir no Drive](${folder.webViewLink})`;
+                                    msg += '\n\nDeseja que eu crie alguma subpasta dentro dela?';
+                                    await sendMessage(chatId, msg);
+                                    resposta = msg;
+                                } catch (driveErr) {
+                                    console.error('[assistente] Erro ao criar pasta:', driveErr.message);
+                                    await sendMessage(chatId, `Não consegui criar a pasta '${nomePasta}'. Verifique a conexão com o Drive.`);
+                                    resposta = 'Erro ao criar pasta';
+                                }
+                            }
+
+                        } else if (intencao === 'criar_subpasta') {
+                            const nomeSubpasta = (campos.nome_subpasta || '').trim();
+                            const ctx = getContext(chatId);
+                            let pastaPai = campos.pasta_pai || ctx.pasta_ativa;
+                            let pastaPaiId = ctx.pasta_ativa_id;
+
+                            if (!nomeSubpasta) {
+                                await sendMessage(chatId, 'Qual nome deseja dar para a subpasta?');
+                            } else if (!pastaPai) {
+                                await sendMessage(chatId, 'Em qual pasta devo criar essa subpasta? Informe o nome da pasta principal ou crie uma antes.');
+                            } else {
+                                try {
+                                    // Se a pasta pai mudou ou não tem ID, buscar/criar
+                                    if (!pastaPaiId || pastaPai !== ctx.pasta_ativa) {
+                                        const parent = await getOrCreateClientFolder(pastaPai, null, null);
+                                        pastaPaiId = parent.id;
+                                        setPastaAtiva(chatId, pastaPai, pastaPaiId);
+                                    }
+                                    const subfolder = await getOrCreateClientFolder(nomeSubpasta, null, pastaPaiId);
+                                    setSubpastaAtiva(chatId, nomeSubpasta, subfolder.id);
+
+                                    let msg = `Subpasta *'${nomeSubpasta}'* criada dentro de *'${pastaPai}'*.`;
+                                    if (subfolder.webViewLink) msg += `\n🔗 [Abrir no Drive](${subfolder.webViewLink})`;
+                                    msg += '\n\nAgora você pode me enviar documentos para salvar nela.';
+                                    await sendMessage(chatId, msg);
+                                    resposta = msg;
+                                } catch (driveErr) {
+                                    console.error('[assistente] Erro ao criar subpasta:', driveErr.message);
+                                    await sendMessage(chatId, `Não consegui criar a subpasta '${nomeSubpasta}'. Verifique a conexão com o Drive.`);
+                                    resposta = 'Erro ao criar subpasta';
+                                }
+                            }
+
+                        } else if (intencao === 'buscar_cliente') {
+                            const nomeCliente = (campos.nome_cliente || '').trim();
+                            if (!nomeCliente) {
+                                await sendMessage(chatId, 'Qual o nome do cliente que deseja buscar?');
+                            } else {
+                                const cliente = await findCliente(pool, { nome_cliente: nomeCliente });
+                                if (cliente) {
+                                    setClienteAtivo(chatId, cliente.nome);
+                                    const lines = [
+                                        `*Cliente encontrado:*`,
+                                        `👤 ${cliente.nome}`,
+                                        `🪪 CPF: ${cliente.cpf || '—'}`,
+                                        `📱 Tel: ${cliente.telefone || '—'}`,
+                                        `📧 Email: ${cliente.email || '—'}`,
+                                        `📍 ${cliente.endereco || '—'}`,
+                                    ];
+                                    if (cliente.drive_folder_url) lines.push(`📂 [Pasta no Drive](${cliente.drive_folder_url})`);
+                                    await sendMessage(chatId, lines.join('\n'));
+                                    resposta = lines.join('\n');
+                                } else {
+                                    await sendMessage(chatId, `Nenhum cliente encontrado com o nome *${nomeCliente}*.\nEnvie um documento desse cliente e eu crio o cadastro automaticamente.`);
+                                    resposta = 'Cliente não encontrado';
+                                }
+                            }
+
+                        } else if (intencao === 'listar_pastas') {
+                            const ctx = getContext(chatId);
+                            const lines = ['*Contexto atual:*'];
+                            if (ctx.pasta_ativa) {
+                                lines.push(`📂 Pasta ativa: *${ctx.pasta_ativa}*`);
+                            } else {
+                                lines.push('Nenhuma pasta ativa no momento.');
+                            }
+                            if (ctx.subpasta_ativa) lines.push(`📁 Subpasta ativa: *${ctx.subpasta_ativa}*`);
+                            if (ctx.cliente_ativo) lines.push(`👤 Cliente ativo: *${ctx.cliente_ativo}*`);
+                            await sendMessage(chatId, lines.join('\n'));
+                            resposta = lines.join('\n');
+
+                        } else if (intencao === 'continuar_contexto') {
+                            if (resposta) {
+                                await sendMessage(chatId, resposta);
+                            } else {
+                                await sendMessage(chatId, 'Entendi. O que gostaria de fazer agora?');
+                                resposta = 'Aguardando instrução';
+                            }
+
+                        } else {
+                            // conversa_geral — usar Claude para responder
+                            if (resposta) {
+                                await sendMessage(chatId, resposta);
+                            } else {
+                                try {
+                                    const reply = await chat(chatId, text);
+                                    await sendMessage(chatId, reply);
+                                    resposta = reply;
+                                } catch (chatErr) {
+                                    console.error('[!] Erro chat Claude:', chatErr.message);
+                                    const ctx = getContext(chatId);
+                                    const lines = ['Olá! Sou o assistente do escritório *Meneses e Teixeira*.', ''];
+                                    lines.push('Posso ajudá-lo com:');
+                                    lines.push('• Criar e organizar pastas no Drive');
+                                    lines.push('• Classificar e salvar documentos');
+                                    lines.push('• Buscar clientes cadastrados');
+                                    lines.push('');
+                                    if (ctx.pasta_ativa) {
+                                        lines.push(`📂 Pasta ativa: *${ctx.pasta_ativa}*`);
+                                        if (ctx.subpasta_ativa) lines.push(`📁 Subpasta: *${ctx.subpasta_ativa}*`);
+                                        lines.push('');
+                                    }
+                                    lines.push('O que deseja fazer?');
+                                    await sendMessage(chatId, lines.join('\n'));
+                                    resposta = lines.join('\n');
+                                }
+                            }
+                        }
+
+                        addAssistantResponse(chatId, resposta || 'OK');
+
                     } catch (err) {
-                        console.error('[!] Erro chat Claude:', err.message);
-                        await sendMessage(chatId, "📎 Envie um documento em formato de *Imagem* ou *PDF* para processá-lo.\n\n📦 Pode enviar até *10 de uma vez* — eu processo todos juntos!");
+                        console.error('[!] Erro assistente:', err.message, err.stack);
+                        await sendMessage(chatId, 'Desculpe, não consegui processar sua mensagem. Tente novamente.');
                     }
                 }
             }
