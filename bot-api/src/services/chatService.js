@@ -67,8 +67,19 @@ function extractActions(text) {
   return { cleanText, actions };
 }
 
+// Estado de destino ativo por chat
+const targetFolders = new Map();
+
+function getTargetFolder(chatId) {
+  return targetFolders.get(chatId) || null;
+}
+
+function clearTargetFolder(chatId) {
+  targetFolders.delete(chatId);
+}
+
 // Executa ações retornadas pelo Claude
-async function executeActions(actions) {
+async function executeActions(actions, chatId) {
   const results = [];
 
   for (const action of actions) {
@@ -79,18 +90,36 @@ async function executeActions(actions) {
         results.push({ ok: true, tipo: 'pasta', nome: action.nome, link: folder.webViewLink });
 
       } else if (action.tipo === 'criar_subpasta') {
-        // Primeiro encontra a pasta pai
         const parentFolder = await getOrCreateClientFolder(action.pasta_pai);
         const subId = await getSubfolderInUserFolder(parentFolder.id, action.nome);
         console.log(`[+] Chat: Subpasta criada: ${action.nome} dentro de ${action.pasta_pai}`);
         results.push({ ok: true, tipo: 'subpasta', nome: action.nome, pai: action.pasta_pai });
+
+      } else if (action.tipo === 'definir_destino') {
+        // Criar toda a cadeia de pastas e definir o último como destino
+        const caminho = action.caminho || [];
+        if (caminho.length === 0) continue;
+
+        let currentFolder = await getOrCreateClientFolder(caminho[0]);
+        let currentId = currentFolder.id;
+        const pathStr = [caminho[0]];
+
+        for (let i = 1; i < caminho.length; i++) {
+          currentId = await getSubfolderInUserFolder(currentId, caminho[i]);
+          pathStr.push(caminho[i]);
+        }
+
+        const fullPath = pathStr.join(' > ');
+        targetFolders.set(chatId, { folderId: currentId, path: fullPath });
+        console.log(`[+] Chat: Destino definido: ${fullPath} (${currentId})`);
+        results.push({ ok: true, tipo: 'destino', nome: fullPath });
 
       } else {
         console.log(`[!] Ação desconhecida: ${action.tipo}`);
       }
     } catch (err) {
       console.error(`[!] Erro executando ação ${action.tipo}:`, err.message);
-      results.push({ ok: false, tipo: action.tipo, nome: action.nome, erro: err.message });
+      results.push({ ok: false, tipo: action.tipo, nome: action.nome || action.caminho?.join(' > '), erro: err.message });
     }
   }
 
@@ -112,11 +141,11 @@ async function chat(chatId, userMessage) {
   const rawReply = response.content[0].text;
   const { cleanText, actions } = extractActions(rawReply);
 
-  // Executar ações operacionais (criar pasta, subpasta, etc)
+  // Executar ações operacionais (criar pasta, subpasta, definir destino, etc)
   let actionResults = [];
   if (actions.length > 0) {
     console.log(`[+] Chat: ${actions.length} ação(ões) detectada(s)`);
-    actionResults = await executeActions(actions);
+    actionResults = await executeActions(actions, chatId);
   }
 
   // Salvar a resposta limpa no histórico
@@ -136,4 +165,4 @@ async function chat(chatId, userMessage) {
   return finalReply;
 }
 
-module.exports = { chat, initChat };
+module.exports = { chat, initChat, getTargetFolder, clearTargetFolder };

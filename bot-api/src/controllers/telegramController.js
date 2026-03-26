@@ -7,7 +7,7 @@ const { getOrCreateClientFolder, uploadFile } = require('../services/googleDrive
 const { upsertClient } = require('../services/googleSheetsService');
 const { findCliente, createCliente, updateCliente, getNextFileNumber, findClientesSimilares } = require('../services/clienteService');
 const { getUser, registerUser, getPendingUsers } = require('../services/userService');
-const { chat } = require('../services/chatService');
+const { chat, getTargetFolder, clearTargetFolder } = require('../services/chatService');
 const { transcribeAudio, parseIntent } = require('../services/audioService');
 const { checkLimit, getRemainingTime } = require('../services/rateLimiter');
 
@@ -34,7 +34,18 @@ function createProcessor(pool) {
                 chat_id: chatId, text, parse_mode: 'Markdown', ...extra
             });
         } catch (error) {
-            console.error('Erro envio:', error.response?.data || error.message);
+            // Se falhar com Markdown, tenta sem formatação
+            if (error.response?.data?.error_code === 400) {
+                try {
+                    await axios.post(`${TELEGRAM_API}/sendMessage`, {
+                        chat_id: chatId, text, ...extra
+                    });
+                } catch (e2) {
+                    console.error('Erro envio (sem MD):', e2.response?.data || e2.message);
+                }
+            } else {
+                console.error('Erro envio:', error.response?.data || error.message);
+            }
         }
     };
 
@@ -422,7 +433,12 @@ function createProcessor(pool) {
 
                 const timer = setTimeout(() => {
                     batchTimers.delete(chatId);
-                    if (batch.docs.length === 1) {
+                    // Se tem destino ativo, salva direto lá
+                    const target = getTargetFolder(chatId);
+                    if (target) {
+                        handleDirectUpload(chatId, remetenteNumero, remetenteNome, batch.docs, target);
+                        batchBuffer.delete(chatId);
+                    } else if (batch.docs.length === 1) {
                         const singleDoc = batch.docs[0];
                         batchBuffer.delete(chatId);
                         handleSingleDoc(chatId, remetenteNumero, remetenteNome, singleDoc);
@@ -529,6 +545,58 @@ function createProcessor(pool) {
                 reply_markup: JSON.stringify({ inline_keyboard: buttons })
             });
         }
+    }
+
+    // ── Upload direto para destino definido (sem perguntar cliente) ──
+    async function handleDirectUpload(chatId, remetenteNumero, remetenteNome, docs, target) {
+        await sendMessage(chatId, `⏳ _Salvando ${docs.length} documento(s) em ${target.path}..._`);
+
+        const results = [];
+        for (let i = 0; i < docs.length; i++) {
+            const { aiResult, base64Data, mimeType, fileName } = docs[i];
+            try {
+                const tipoDoc = aiResult.tipo_documento || 'Outro';
+                const cleanType = tipoDoc.replace(/\s+/g, '_');
+                const numStr = String(i + 1).padStart(3, '0');
+                const finalFileName = `${numStr}_${cleanType}_${fileName}`;
+
+                const fileResult = await uploadFile(target.folderId, finalFileName, base64Data, mimeType);
+                console.log(`[+] Direto: ${finalFileName} → ${target.path}`);
+
+                results.push({ ok: true, fileName: fileResult.name, tipoDoc, descricao: aiResult.descricao, link: fileResult.webViewLink });
+            } catch (err) {
+                console.error(`[!] Erro upload direto ${i + 1}:`, err.message);
+                results.push({ ok: false, fileName, tipoDoc: 'Erro', descricao: err.message });
+            }
+        }
+
+        // Confirmação
+        if (results.length === 1 && results[0].ok) {
+            const r = results[0];
+            const lines = [
+                `✅ *Documento salvo!*`,
+                `📁 Tipo: *${r.tipoDoc}*`,
+                `🗂 ${r.descricao || '—'}`,
+                `💾 Arquivo: \`${r.fileName}\``,
+                `📂 Destino: *${target.path}*`,
+            ];
+            if (r.link) lines.push(`🔗 [Abrir no Drive](${r.link})`);
+            await sendMessage(chatId, lines.join('\n'));
+        } else {
+            const lines = [`✅ *${results.filter(r => r.ok).length}/${results.length} documentos salvos em ${target.path}:*`, ``];
+            for (let i = 0; i < results.length; i++) {
+                const r = results[i];
+                if (r.ok) {
+                    lines.push(`${i + 1}. *${r.tipoDoc}* - \`${r.fileName}\``);
+                    if (r.link) lines.push(`   [Drive](${r.link})`);
+                } else {
+                    lines.push(`${i + 1}. ❌ Erro: ${r.descricao}`);
+                }
+            }
+            await sendMessage(chatId, lines.join('\n'));
+        }
+
+        batchBuffer.delete(chatId);
     }
 
     return processUpdate;
