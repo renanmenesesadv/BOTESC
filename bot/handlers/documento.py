@@ -32,13 +32,32 @@ async def _process_file(
     update: Update, context: ContextTypes.DEFAULT_TYPE,
     file_id: str, file_name: str
 ):
-    """Fluxo principal: download → IA → Drive → Sheets → resposta."""
-    chat_id = update.effective_chat.id
+    """Fluxo principal: download → IA → Drive → Sheets → resposta.
+
+    Se existir contexto de pasta/subpasta ativa, salva diretamente ali.
+    """
     sender_name = update.effective_user.first_name or "Desconhecido"
 
+    # Contexto do assistente (pasta/subpasta ativa)
+    assistente_ctx = context.chat_data.get("assistente", {})
+    pasta_ativa = assistente_ctx.get("pasta_ativa")
+    subpasta_ativa = assistente_ctx.get("subpasta_ativa")
+    target_folder_id = (
+        assistente_ctx.get("subpasta_ativa_id")
+        or assistente_ctx.get("pasta_ativa_id")
+    )
+
+    # Mensagem de status contextual
+    if pasta_ativa:
+        destino = pasta_ativa
+        if subpasta_ativa:
+            destino = f"{pasta_ativa} > {subpasta_ativa}"
+        status_msg = f"Recebido! Analisando e salvando em *{destino}*..."
+    else:
+        status_msg = "Recebido! A IA está analisando seu documento..."
+
     await update.message.reply_text(
-        "⏳ _Recebido! A IA está analisando seu documento..._",
-        parse_mode="Markdown",
+        f"⏳ _{status_msg}_", parse_mode="Markdown",
     )
 
     try:
@@ -55,18 +74,25 @@ async def _process_file(
         cliente, is_new = await find_or_create_client(client_name, ai_result)
         status_emoji = "🆕 Cliente Novo" if is_new else "🔄 Cliente Existente"
 
-        # 4. Pasta no Drive
-        folder = await get_or_create_client_folder(client_name, cliente.get("drive_folder_id"))
+        # 4. Pasta no Drive — usar contexto ativo ou criar pasta do cliente
+        if target_folder_id:
+            folder_id = target_folder_id
+            folder_link = None
+        else:
+            folder = await get_or_create_client_folder(client_name, cliente.get("drive_folder_id"))
+            folder_id = folder["id"]
+            folder_link = folder.get("webViewLink")
 
         # 5. Upload do arquivo
         file_result = await upload_file(
-            folder["id"],
+            folder_id,
             ai_result.get("nome_sugerido", file_name),
             file_bytes,
             mime_type,
         )
 
         # 6. Atualizar planilha
+        drive_url = folder_link or file_result.get("webViewLink")
         await upsert_client(
             nome=client_name,
             cpf=ai_result.get("cpf"),
@@ -74,7 +100,7 @@ async def _process_file(
             telefone=ai_result.get("telefone"),
             email=ai_result.get("email"),
             endereco=ai_result.get("endereco"),
-            drive_url=folder.get("webViewLink"),
+            drive_url=drive_url,
         )
 
         # 7. Resposta ao usuário
@@ -86,6 +112,11 @@ async def _process_file(
             f"🗂 *Descrição:* {ai_result.get('descricao', '—')}",
             f"💾 *Arquivo:* {file_result.get('name', file_name)}",
         ]
+        if pasta_ativa:
+            destino = pasta_ativa
+            if subpasta_ativa:
+                destino = f"{pasta_ativa} > {subpasta_ativa}"
+            lines.append(f"📂 *Salvo em:* {destino}")
         if ai_result.get("cpf"):
             lines.append(f"🪪 *CPF:* {ai_result['cpf']}")
         if file_result.get("webViewLink"):

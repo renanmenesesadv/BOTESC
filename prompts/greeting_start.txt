@@ -1,13 +1,15 @@
 👋 *Bem-vindo ao Assistente Jurídico do Escritório Meneses e Teixeira!*
 
-Sou seu assistente inteligente de documentos. Veja o que posso fazer:
+Sou seu assistente inteligente de documentos e organização. Veja o que posso fazer:
 
+📂 *Criar e organizar pastas* — Basta pedir (ex: "Crie uma pasta HV Pop")
 📋 *Classificar documentos* — Envie uma foto ou PDF
 👤 *Identificar clientes* — Extraio nome, CPF, RG, endereço
-📂 *Organizar no Drive* — Crio pasta do cliente automaticamente
+💾 *Salvar no Drive* — Organizo tudo automaticamente
 📊 *Registrar na planilha* — Dados salvos no Google Sheets
+🎙️ *Ouvir seus áudios* — Envie um áudio que eu entendo e executo
 
 *Como usar:*
-Basta enviar uma *foto* ou *PDF* de qualquer documento jurídico (RG, CPF, contrato, procuração, comprovante, etc).
+Converse comigo naturalmente! Pode digitar, enviar documentos, ou mandar áudio.
 
-Eu cuido do resto! 🚀
+Exemplo: _"Crie uma pasta chamada HV Pop"_ → Pronto!
