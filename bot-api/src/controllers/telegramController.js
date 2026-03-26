@@ -3,10 +3,10 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const { processDocument } = require('../services/geminiService');
-const { getOrCreateClientFolder, uploadFile, getSubfolderInUserFolder } = require('../services/googleDriveService');
+const { getOrCreateClientFolder, uploadFile } = require('../services/googleDriveService');
 const { upsertClient } = require('../services/googleSheetsService');
 const { findCliente, createCliente, updateCliente, getNextFileNumber, findClientesSimilares } = require('../services/clienteService');
-const { getUser, registerUser, getPendingUsers, getSubfolder } = require('../services/userService');
+const { getUser, registerUser, getPendingUsers } = require('../services/userService');
 
 const greetingPath = path.join(__dirname, '../../../prompts/greeting_start.txt');
 const GREETING = fs.existsSync(greetingPath)
@@ -15,18 +15,16 @@ const GREETING = fs.existsSync(greetingPath)
 
 const MAX_BATCH = 10;
 const MAX_FILE_SIZE_MB = 20;
-const BATCH_WAIT_MS = 5000; // espera 5s após último doc para fechar o lote
+const BATCH_WAIT_MS = 5000;
 
-// Estado por chat
-const pendingDocs = new Map();    // doc único aguardando seleção de cliente
-const batchBuffer = new Map();    // lote acumulando arquivos
-const batchTimers = new Map();    // timers de fechamento do lote
+const pendingDocs = new Map();
+const batchBuffer = new Map();
+const batchTimers = new Map();
 
 function createProcessor(pool) {
     const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
     const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
 
-    // ── Helpers ──────────────────────────────────────────────
     const sendMessage = async (chatId, text, extra = {}) => {
         try {
             await axios.post(`${TELEGRAM_API}/sendMessage`, {
@@ -60,8 +58,8 @@ function createProcessor(pool) {
         return { base64Data, mimeType };
     };
 
-    // ── Finalizar um documento (upload + banco + planilha) ──
-    async function finalizarUmDocumento(chatId, remetenteNumero, remetenteNome, docData, clienteNome, user) {
+    // ── Finalizar um documento: pasta do cliente → upload direto ──
+    async function finalizarUmDocumento(remetenteNumero, remetenteNome, docData, clienteNome) {
         const { aiResult, base64Data, mimeType, fileName } = docData;
         const clientName = clienteNome || aiResult.nome_cliente || remetenteNome;
 
@@ -74,14 +72,12 @@ function createProcessor(pool) {
             await updateCliente(pool, cliente.id, aiResult);
         } else {
             clienteStatus = 'novo';
-            const clientesFolderId = await getSubfolderInUserFolder(user.drive_folder_id, 'Clientes');
-            const clientFolder = await getOrCreateClientFolder(clientName, null, clientesFolderId);
+            const clientFolder = await getOrCreateClientFolder(clientName);
             cliente = await createCliente(pool, { ...aiResult, nome_cliente: clientName }, clientFolder.id, clientFolder.webViewLink);
         }
 
         const tipoDoc = aiResult.tipo_documento || 'Outro';
-        const subfolderName = getSubfolder(tipoDoc);
-        const targetFolderId = await getSubfolderInUserFolder(user.drive_folder_id, subfolderName);
+        const clientFolderId = cliente.drive_folder_id;
 
         const nextNum = await getNextFileNumber(pool, cliente.id);
         const numStr = String(nextNum).padStart(3, '0');
@@ -89,12 +85,12 @@ function createProcessor(pool) {
         const cleanType = tipoDoc.replace(/\s+/g, '_');
         const finalFileName = `${numStr}_${cleanType}_${cleanName}`;
 
-        const fileResult = await uploadFile(targetFolderId, finalFileName, base64Data, mimeType);
+        const fileResult = await uploadFile(clientFolderId, finalFileName, base64Data, mimeType);
 
         await pool.query(
             `INSERT INTO documentos (cliente_id, remetente_numero, remetente_nome, nome_arquivo_original, nome_arquivo_salvo, tipo_documento, descricao_gemini, link_drive, pasta_drive, numero_arquivo, status)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-            [cliente.id, remetenteNumero, remetenteNome, fileName, fileResult.name, tipoDoc, aiResult.descricao, fileResult.webViewLink, targetFolderId, nextNum, 'processado']
+            [cliente.id, remetenteNumero, remetenteNome, fileName, fileResult.name, tipoDoc, aiResult.descricao, fileResult.webViewLink, clientFolderId, nextNum, 'processado']
         );
 
         try {
@@ -102,35 +98,29 @@ function createProcessor(pool) {
         } catch (e) { console.error('[!] Erro planilha:', e.message); }
 
         return {
-            clientName, clienteStatus, tipoDoc, subfolderName,
+            clientName, clienteStatus, tipoDoc,
             descricao: aiResult.descricao, dataDoc: aiResult.data_documento,
             fileName: fileResult.name, link: fileResult.webViewLink,
             cpf: aiResult.cpf, rg: aiResult.rg, endereco: aiResult.endereco
         };
     }
 
-    // ── Finalizar doc único (mantém fluxo existente) ────────
+    // ── Finalizar doc único ─────────────────────────────────
     async function finalizarDocumento(chatId, remetenteNumero, remetenteNome, pending, clienteNome) {
-        const user = getUser(remetenteNumero);
-        if (!user) return await sendMessage(chatId, "❌ Você não está registrado. Use /start para se registrar.");
-
-        const result = await finalizarUmDocumento(chatId, remetenteNumero, remetenteNome, pending, clienteNome, user);
-        await enviarConfirmacao(chatId, [result], user);
+        const result = await finalizarUmDocumento(remetenteNumero, remetenteNome, pending, clienteNome);
+        await enviarConfirmacao(chatId, [result]);
         pendingDocs.delete(chatId);
     }
 
-    // ── Finalizar lote inteiro ──────────────────────────────
+    // ── Finalizar lote ──────────────────────────────────────
     async function finalizarLote(chatId, remetenteNumero, remetenteNome, docs, clienteNome) {
-        const user = getUser(remetenteNumero);
-        if (!user) return await sendMessage(chatId, "❌ Você não está registrado. Use /start para se registrar.");
-
         await sendMessage(chatId, `⏳ _Processando ${docs.length} documento(s)..._`);
 
         const resultados = [];
         for (let i = 0; i < docs.length; i++) {
             try {
                 console.log(`[+] Lote: processando ${i + 1}/${docs.length}: ${docs[i].fileName}`);
-                const r = await finalizarUmDocumento(chatId, remetenteNumero, remetenteNome, docs[i], clienteNome, user);
+                const r = await finalizarUmDocumento(remetenteNumero, remetenteNome, docs[i], clienteNome);
                 resultados.push(r);
             } catch (err) {
                 console.error(`[!] Erro no doc ${i + 1}:`, err.message);
@@ -138,13 +128,13 @@ function createProcessor(pool) {
             }
         }
 
-        await enviarConfirmacao(chatId, resultados, user);
+        await enviarConfirmacao(chatId, resultados);
         batchBuffer.delete(chatId);
         pendingDocs.delete(chatId);
     }
 
-    // ── Mensagem de confirmação (1 ou vários) ───────────────
-    async function enviarConfirmacao(chatId, resultados, user) {
+    // ── Confirmação (1 ou vários docs) ──────────────────────
+    async function enviarConfirmacao(chatId, resultados) {
         if (resultados.length === 1) {
             const r = resultados[0];
             const statusEmoji = r.clienteStatus === 'novo' ? '🆕 Cliente Novo — Pasta criada' : '🔄 Cliente Existente';
@@ -154,29 +144,21 @@ function createProcessor(pool) {
                 `👤 *Cliente:* ${r.clientName}`,
                 `${statusEmoji}`,
                 ``,
-                `📋 *Detalhes do documento:*`,
                 `📁 Tipo: *${r.tipoDoc}*`,
                 `🗂 Descrição: ${r.descricao || '—'}`,
                 `📅 Data: ${r.dataDoc || '—'}`,
-                ``,
-                `💾 *Arquivo salvo como:*`,
-                `\`${r.fileName}\``,
-                `📂 Pasta: *${user.nome} → ${r.subfolderName}*`,
+                `💾 Arquivo: \`${r.fileName}\``,
             ];
             if (r.cpf) lines.push(`🪪 CPF: ${r.cpf}`);
             if (r.rg) lines.push(`🪪 RG: ${r.rg}`);
-            if (r.endereco) lines.push(`📍 Endereço: ${r.endereco}`);
             if (r.link) lines.push(``, `🔗 [Abrir no Google Drive](${r.link})`);
             await sendMessage(chatId, lines.join('\n'));
         } else {
-            // Resumo do lote
             const lines = [
                 `✅ *${resultados.length} Documentos Salvos com Sucesso!*`,
                 `👤 *Cliente:* ${resultados[0]?.clientName || '—'}`,
-                `📂 *Pasta:* ${user.nome}`,
                 ``,
             ];
-
             for (let i = 0; i < resultados.length; i++) {
                 const r = resultados[i];
                 if (r.link) {
@@ -186,19 +168,17 @@ function createProcessor(pool) {
                     lines.push(`${i + 1}. ❌ *${r.tipoDoc}* — ${r.descricao}`);
                 }
             }
-
             await sendMessage(chatId, lines.join('\n'));
         }
     }
 
-    // ── Fechar o lote e perguntar cliente ────────────────────
+    // ── Fechar lote e perguntar cliente ──────────────────────
     async function fecharLote(chatId, remetenteNumero, remetenteNome) {
         const batch = batchBuffer.get(chatId);
         if (!batch || batch.docs.length === 0) return;
 
         console.log(`[+] Lote fechado: ${batch.docs.length} doc(s) de ${remetenteNome}`);
 
-        // Verificar se algum doc tem cliente identificado
         let clienteEncontrado = null;
         let nomeIA = null;
         let cpfIA = null;
@@ -213,20 +193,12 @@ function createProcessor(pool) {
         }
 
         if (clienteEncontrado) {
-            // Auto-identificou — processa direto
             console.log(`[+] Lote: cliente auto-identificado: ${clienteEncontrado.nome}`);
             await finalizarLote(chatId, remetenteNumero, remetenteNome, batch.docs, clienteEncontrado.nome);
         } else {
-            // Perguntar ao usuário
-            pendingDocs.set(chatId, {
-                isLote: true,
-                docs: batch.docs,
-                remetenteNumero,
-                remetenteNome
-            });
+            pendingDocs.set(chatId, { isLote: true, docs: batch.docs, remetenteNumero, remetenteNome });
 
             const buttons = [];
-
             if (nomeIA) {
                 buttons.push([{ text: `🆕 Criar pasta: ${nomeIA}`, callback_data: 'lote_novo' }]);
                 const similar = await findClientesSimilares(pool, nomeIA, 3);
@@ -238,13 +210,9 @@ function createProcessor(pool) {
                 buttons.push([{ text: '🆕 Cadastrar cliente novo', callback_data: 'lote_novo' }]);
             }
 
-            const info = [
-                `📦 *${batch.docs.length} documento(s) recebido(s):*`,
-                ``,
-            ];
+            const info = [`📦 *${batch.docs.length} documento(s) recebido(s):*`, ``];
             for (let i = 0; i < batch.docs.length; i++) {
-                const d = batch.docs[i];
-                info.push(`${i + 1}. *${d.aiResult.tipo_documento || '—'}* — ${d.fileName}`);
+                info.push(`${i + 1}. *${batch.docs[i].aiResult.tipo_documento || '—'}* — ${batch.docs[i].fileName}`);
             }
             if (nomeIA) info.push(``, `👤 Nome encontrado: *${nomeIA}*`);
             if (cpfIA) info.push(`🪪 CPF: ${cpfIA}`);
@@ -267,7 +235,6 @@ function createProcessor(pool) {
                 const chatId = cb.message.chat.id;
                 const data = cb.data;
 
-                // Registro de usuário
                 if (data.startsWith('register_')) {
                     const folderId = data.replace('register_', '');
                     const pending = getPendingUsers();
@@ -291,10 +258,9 @@ function createProcessor(pool) {
 
                 await answerCallback(cb.id, 'Processando...');
 
-                // ── Callbacks de LOTE ─────────────────────────
+                // Callbacks de LOTE
                 if (pendingDoc.isLote) {
                     if (data === 'lote_novo') {
-                        // Verificar se algum doc tem nome
                         let nomeIA = null;
                         for (const d of pendingDoc.docs) {
                             if (d.aiResult.nome_cliente) { nomeIA = d.aiResult.nome_cliente; break; }
@@ -309,13 +275,12 @@ function createProcessor(pool) {
                     } else if (data.startsWith('lote_cliente_')) {
                         const clienteId = data.replace('lote_cliente_', '');
                         const result = await pool.query('SELECT nome FROM clientes WHERE id = $1', [clienteId]);
-                        const nome = result.rows[0]?.nome;
-                        await finalizarLote(chatId, pendingDoc.remetenteNumero, pendingDoc.remetenteNome, pendingDoc.docs, nome);
+                        await finalizarLote(chatId, pendingDoc.remetenteNumero, pendingDoc.remetenteNome, pendingDoc.docs, result.rows[0]?.nome);
                     }
                     return;
                 }
 
-                // ── Callbacks de doc único ────────────────────
+                // Callbacks de doc único
                 await sendMessage(chatId, '⏳ _Salvando documento..._');
 
                 if (data === 'cliente_novo') {
@@ -329,8 +294,7 @@ function createProcessor(pool) {
                 } else if (data.startsWith('cliente_')) {
                     const clienteId = data.replace('cliente_', '');
                     const result = await pool.query('SELECT nome FROM clientes WHERE id = $1', [clienteId]);
-                    const nome = result.rows[0]?.nome;
-                    await finalizarDocumento(chatId, pendingDoc.remetenteNumero, pendingDoc.remetenteNome, pendingDoc, nome);
+                    await finalizarDocumento(chatId, pendingDoc.remetenteNumero, pendingDoc.remetenteNome, pendingDoc, result.rows[0]?.nome);
                 }
                 return;
             }
@@ -364,13 +328,11 @@ function createProcessor(pool) {
                     return await sendMessage(chatId, "⚠️ Você ainda não está registrado. Use /start para se identificar primeiro.");
                 }
 
-                // Verificar tamanho
                 const sizeMB = fileSize / (1024 * 1024);
                 if (sizeMB > MAX_FILE_SIZE_MB) {
                     return await sendMessage(chatId, `❌ Arquivo muito grande (${sizeMB.toFixed(1)}MB). Máximo: ${MAX_FILE_SIZE_MB}MB.`);
                 }
 
-                // Baixar e analisar com IA
                 const fileUrl = await getFileUrl(fileId);
                 if (!fileUrl) return await sendMessage(chatId, "❌ Erro ao baixar o arquivo.");
 
@@ -382,9 +344,8 @@ function createProcessor(pool) {
 
                 const docData = { aiResult, base64Data, mimeType, fileName, remetenteNumero, remetenteNome };
 
-                // ── Acumular no lote ────────────────────────
+                // Acumular no lote
                 let batch = batchBuffer.get(chatId);
-
                 if (!batch) {
                     batch = { docs: [], remetenteNumero, remetenteNome };
                     batchBuffer.set(chatId, batch);
@@ -397,23 +358,17 @@ function createProcessor(pool) {
                 batch.docs.push(docData);
                 const count = batch.docs.length;
 
-                // Cancelar timer anterior
-                if (batchTimers.has(chatId)) {
-                    clearTimeout(batchTimers.get(chatId));
-                }
+                if (batchTimers.has(chatId)) clearTimeout(batchTimers.get(chatId));
 
-                // Notificar quantos docs acumulados
                 if (count === 1) {
                     await sendMessage(chatId, `📄 _1 documento recebido (${aiResult.tipo_documento || '—'}). Envie mais ou aguarde 5s para processar._`);
                 } else {
                     await sendMessage(chatId, `📄 _${count} documentos no lote (máx. ${MAX_BATCH}). Envie mais ou aguarde 5s._`);
                 }
 
-                // Timer: se não receber mais docs em 5s, fecha o lote
                 const timer = setTimeout(() => {
                     batchTimers.delete(chatId);
                     if (batch.docs.length === 1) {
-                        // Lote com 1 doc: usa fluxo normal
                         const singleDoc = batch.docs[0];
                         batchBuffer.delete(chatId);
                         handleSingleDoc(chatId, remetenteNumero, remetenteNome, singleDoc);
@@ -430,7 +385,6 @@ function createProcessor(pool) {
             if (message.text) {
                 const text = message.text;
 
-                // Esperando nome do cliente (lote ou doc único)
                 const pendingDoc = pendingDocs.get(chatId);
                 if (pendingDoc && pendingDoc.waitingForName && !text.startsWith('/')) {
                     const nomeDigitado = text.trim();
@@ -454,15 +408,12 @@ function createProcessor(pool) {
                     } else {
                         const pending = getPendingUsers();
                         const names = Object.entries(pending);
-
                         if (names.length === 0) {
                             return await sendMessage(chatId, "⚠️ Não há vagas de registro disponíveis. Contate o administrador.");
                         }
-
                         const buttons = names.map(([name, folderId]) => ([
                             { text: `👤 ${name}`, callback_data: `register_${folderId}` }
                         ]));
-
                         await sendMessage(chatId, `👋 *Bem-vindo ao Bot Jurídico!*\n\n🔐 Para começar, selecione seu nome:`, {
                             reply_markup: JSON.stringify({ inline_keyboard: buttons })
                         });
