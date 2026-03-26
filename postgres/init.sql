@@ -37,3 +37,14 @@ CREATE INDEX IF NOT EXISTS idx_tipo ON documentos(tipo_documento);
 CREATE INDEX IF NOT EXISTS idx_data ON documentos(data_recebimento);
 CREATE INDEX IF NOT EXISTS idx_remetente ON documentos(remetente_numero);
 CREATE INDEX IF NOT EXISTS idx_cliente ON documentos(cliente_id);
+
+-- ── Tabela de Histórico de Chat ──────────────────────────
+CREATE TABLE IF NOT EXISTS chat_history (
+  id          SERIAL PRIMARY KEY,
+  chat_id     BIGINT NOT NULL,
+  role        VARCHAR(10) NOT NULL,
+  content     TEXT NOT NULL,
+  criado_em   TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_history_chat ON chat_history(chat_id);

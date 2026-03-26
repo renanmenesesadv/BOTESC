@@ -27,6 +27,10 @@ app.use('/telegram', telegramRoutes(pool));
 app.listen(port, () => {
   console.log(`Bot API listening at http://localhost:${port}`);
 
+  // Inicializar chat com persistência no banco
+  const { initChat } = require('./services/chatService');
+  initChat(pool);
+
   // Iniciar polling do Telegram (funciona sem SSL/webhook)
   const { createProcessor } = require('./controllers/telegramController');
   const startPolling = require('./services/telegramPolling');

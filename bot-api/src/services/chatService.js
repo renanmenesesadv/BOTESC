@@ -9,38 +9,64 @@ const SYSTEM_PROMPT = fs.existsSync(promptPath)
   ? fs.readFileSync(promptPath, 'utf-8')
   : 'Você é um assistente jurídico. Responda de forma clara e objetiva.';
 
-// Histórico por chat (últimas 10 mensagens para contexto)
-const chatHistory = new Map();
 const MAX_HISTORY = 10;
+let _pool = null;
 
-function getHistory(chatId) {
-  return chatHistory.get(chatId) || [];
+function initChat(pool) {
+  _pool = pool;
+  // Criar tabela se não existir (idempotente)
+  pool.query(`
+    CREATE TABLE IF NOT EXISTS chat_history (
+      id SERIAL PRIMARY KEY,
+      chat_id BIGINT NOT NULL,
+      role VARCHAR(10) NOT NULL,
+      content TEXT NOT NULL,
+      criado_em TIMESTAMP DEFAULT NOW()
+    )
+  `).catch(() => {});
+  pool.query(`CREATE INDEX IF NOT EXISTS idx_chat_history_chat ON chat_history(chat_id)`).catch(() => {});
 }
 
-function addToHistory(chatId, role, content) {
-  const history = getHistory(chatId);
-  history.push({ role, content });
-  // Manter só as últimas MAX_HISTORY mensagens
-  if (history.length > MAX_HISTORY) {
-    history.splice(0, history.length - MAX_HISTORY);
-  }
-  chatHistory.set(chatId, history);
+async function getHistory(chatId) {
+  if (!_pool) return [];
+  const res = await _pool.query(
+    `SELECT role, content FROM chat_history WHERE chat_id = $1 ORDER BY id DESC LIMIT $2`,
+    [chatId, MAX_HISTORY]
+  );
+  return res.rows.reverse(); // mais antigo primeiro
+}
+
+async function addToHistory(chatId, role, content) {
+  if (!_pool) return;
+  await _pool.query(
+    `INSERT INTO chat_history (chat_id, role, content) VALUES ($1, $2, $3)`,
+    [chatId, role, content]
+  );
+  // Limpar mensagens antigas (manter só as últimas MAX_HISTORY * 2)
+  await _pool.query(
+    `DELETE FROM chat_history WHERE chat_id = $1 AND id NOT IN (
+       SELECT id FROM chat_history WHERE chat_id = $1 ORDER BY id DESC LIMIT $2
+     )`,
+    [chatId, MAX_HISTORY * 2]
+  ).catch(() => {});
 }
 
 async function chat(chatId, userMessage) {
-  addToHistory(chatId, 'user', userMessage);
+  await addToHistory(chatId, 'user', userMessage);
+
+  const history = await getHistory(chatId);
 
   const response = await anthropic.messages.create({
     model: 'claude-sonnet-4-20250514',
     max_tokens: 1024,
     system: SYSTEM_PROMPT,
-    messages: getHistory(chatId)
+    messages: history
   });
 
   const reply = response.content[0].text;
-  addToHistory(chatId, 'assistant', reply);
+  await addToHistory(chatId, 'assistant', reply);
 
   return reply;
 }
 
-module.exports = { chat };
+module.exports = { chat, initChat };

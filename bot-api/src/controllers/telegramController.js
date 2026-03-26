@@ -8,6 +8,8 @@ const { upsertClient } = require('../services/googleSheetsService');
 const { findCliente, createCliente, updateCliente, getNextFileNumber, findClientesSimilares } = require('../services/clienteService');
 const { getUser, registerUser, getPendingUsers } = require('../services/userService');
 const { chat } = require('../services/chatService');
+const { transcribeAudio, parseIntent } = require('../services/audioService');
+const { checkLimit, getRemainingTime } = require('../services/rateLimiter');
 
 const greetingPath = path.join(__dirname, '../../../prompts/greeting_start.txt');
 const GREETING = fs.existsSync(greetingPath)
@@ -308,6 +310,12 @@ function createProcessor(pool) {
             const remetenteNome = message.from.first_name || message.from.username || 'Desconhecido';
             const user = getUser(remetenteNumero);
 
+            // ── Rate limiting ──────────────────────────────
+            if (!checkLimit(remetenteNumero)) {
+                const secs = getRemainingTime(remetenteNumero);
+                return await sendMessage(chatId, `⏳ Muitas requisições. Aguarde ${secs}s.`);
+            }
+
             let fileId = null;
             let fileName = 'documento_telegram';
             let fileSize = 0;
@@ -321,6 +329,51 @@ function createProcessor(pool) {
                 fileId = photo.file_id;
                 fileName = `foto_${Date.now()}.jpg`;
                 fileSize = photo.file_size || 0;
+            }
+
+            // ── Áudio / Voz ────────────────────────────────
+            if (message.voice || message.audio) {
+                const audioFileId = message.voice?.file_id || message.audio?.file_id;
+                if (!user) {
+                    return await sendMessage(chatId, "⚠️ Use /start para se registrar primeiro.");
+                }
+
+                await axios.post(`${TELEGRAM_API}/sendChatAction`, { chat_id: chatId, action: 'typing' });
+                await sendMessage(chatId, "🎙️ _Transcrevendo seu áudio..._");
+
+                try {
+                    const audioUrl = await getFileUrl(audioFileId);
+                    if (!audioUrl) return await sendMessage(chatId, "❌ Erro ao baixar o áudio.");
+
+                    const transcription = await transcribeAudio(audioUrl);
+                    console.log(`[+] Áudio transcrito de ${user.nome}: ${transcription.substring(0, 100)}`);
+
+                    const intent = await parseIntent(transcription);
+                    console.log(`[+] Intenção: ${intent.intencao}`);
+
+                    const lines = [
+                        `🎙️ *Transcrição:*`,
+                        `_"${transcription}"_`,
+                        ``,
+                        `🎯 *Intenção:* ${intent.intencao}`,
+                        `📝 *Resumo:* ${intent.resumo || '—'}`,
+                    ];
+                    if (intent.cliente_mencionado) lines.push(`👤 Cliente: ${intent.cliente_mencionado}`);
+                    if (intent.data_mencionada) lines.push(`📅 Data: ${intent.data_mencionada}`);
+                    if (intent.acao_sugerida) lines.push(``, `💡 *Sugestão:* ${intent.acao_sugerida}`);
+
+                    await sendMessage(chatId, lines.join('\n'));
+
+                    // Se a intenção é uma dúvida, responde com o chat
+                    if (intent.intencao === 'duvida') {
+                        const reply = await chat(chatId, transcription);
+                        await sendMessage(chatId, reply);
+                    }
+                } catch (err) {
+                    console.error('[!] Erro áudio:', err.message);
+                    await sendMessage(chatId, "❌ Não consegui processar o áudio. Tente enviar como texto.");
+                }
+                return;
             }
 
             // ── Documento recebido ──────────────────────────
