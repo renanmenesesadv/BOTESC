@@ -61,6 +61,38 @@ async def get_or_create_client_folder(client_name: str, existing_folder_id: str 
     return folder
 
 
+async def create_named_folder(folder_name: str, parent_id: str = None) -> dict:
+    """Cria (ou retorna) uma pasta com nome específico na raiz ou dentro de um pai."""
+    root_id = parent_id or os.getenv("GOOGLE_DRIVE_ROOT_FOLDER_ID")
+    service = _get_service()
+
+    # Busca pasta existente pelo nome
+    query = (
+        f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' "
+        f"and '{root_id}' in parents and trashed=false"
+    )
+    results = service.files().list(q=query, fields="files(id, name, webViewLink)").execute()
+    files = results.get("files", [])
+
+    if files:
+        logger.info(f"Pasta já existe: {files[0]['name']}")
+        return files[0]
+
+    metadata = {
+        "name": folder_name,
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [root_id],
+    }
+    folder = service.files().create(body=metadata, fields="id, name, webViewLink").execute()
+    logger.info(f"Pasta criada: {folder['name']}")
+    return folder
+
+
+async def create_subfolder(parent_folder_id: str, subfolder_name: str) -> dict:
+    """Cria (ou retorna) uma subpasta dentro de uma pasta pai."""
+    return await create_named_folder(subfolder_name, parent_id=parent_folder_id)
+
+
 async def upload_file(
     folder_id: str, file_name: str, file_bytes: bytes, mime_type: str
 ) -> dict:
