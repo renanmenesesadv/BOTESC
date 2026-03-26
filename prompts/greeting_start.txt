@@ -7,8 +7,9 @@ Sou seu assistente inteligente de documentos e organização. Veja o que posso f
 👤 *Identificar clientes* — Extraio nome, CPF, RG, endereço
 💾 *Salvar no Drive* — Organizo tudo automaticamente
 📊 *Registrar na planilha* — Dados salvos no Google Sheets
+🎙️ *Ouvir seus áudios* — Envie um áudio que eu entendo e executo
 
 *Como usar:*
-Converse comigo naturalmente! Peça para criar pastas, envie documentos, ou pergunte o que precisar.
+Converse comigo naturalmente! Pode digitar, enviar documentos, ou mandar áudio.
 
 Exemplo: _"Crie uma pasta chamada HV Pop"_ → Pronto!
