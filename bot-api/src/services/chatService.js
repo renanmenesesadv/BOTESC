@@ -1,6 +1,7 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const fs = require('fs');
 const path = require('path');
+const { getOrCreateClientFolder, getSubfolderInUserFolder } = require('./googleDriveService');
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -14,7 +15,6 @@ let _pool = null;
 
 function initChat(pool) {
   _pool = pool;
-  // Criar tabela se não existir (idempotente)
   pool.query(`
     CREATE TABLE IF NOT EXISTS chat_history (
       id SERIAL PRIMARY KEY,
@@ -33,7 +33,7 @@ async function getHistory(chatId) {
     `SELECT role, content FROM chat_history WHERE chat_id = $1 ORDER BY id DESC LIMIT $2`,
     [chatId, MAX_HISTORY]
   );
-  return res.rows.reverse(); // mais antigo primeiro
+  return res.rows.reverse();
 }
 
 async function addToHistory(chatId, role, content) {
@@ -42,13 +42,59 @@ async function addToHistory(chatId, role, content) {
     `INSERT INTO chat_history (chat_id, role, content) VALUES ($1, $2, $3)`,
     [chatId, role, content]
   );
-  // Limpar mensagens antigas (manter só as últimas MAX_HISTORY * 2)
   await _pool.query(
     `DELETE FROM chat_history WHERE chat_id = $1 AND id NOT IN (
        SELECT id FROM chat_history WHERE chat_id = $1 ORDER BY id DESC LIMIT $2
      )`,
     [chatId, MAX_HISTORY * 2]
   ).catch(() => {});
+}
+
+// Extrai blocos [ACAO]...[/ACAO] da resposta do Claude
+function extractActions(text) {
+  const actions = [];
+  const regex = /\[ACAO\](.*?)\[\/ACAO\]/gs;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    try {
+      actions.push(JSON.parse(match[1]));
+    } catch (e) {
+      console.error('[!] Erro parsing ação:', match[1]);
+    }
+  }
+  // Limpar ações do texto visível
+  const cleanText = text.replace(/\[ACAO\].*?\[\/ACAO\]/gs, '').trim();
+  return { cleanText, actions };
+}
+
+// Executa ações retornadas pelo Claude
+async function executeActions(actions) {
+  const results = [];
+
+  for (const action of actions) {
+    try {
+      if (action.tipo === 'criar_pasta') {
+        const folder = await getOrCreateClientFolder(action.nome);
+        console.log(`[+] Chat: Pasta criada: ${action.nome} (${folder.id})`);
+        results.push({ ok: true, tipo: 'pasta', nome: action.nome, link: folder.webViewLink });
+
+      } else if (action.tipo === 'criar_subpasta') {
+        // Primeiro encontra a pasta pai
+        const parentFolder = await getOrCreateClientFolder(action.pasta_pai);
+        const subId = await getSubfolderInUserFolder(parentFolder.id, action.nome);
+        console.log(`[+] Chat: Subpasta criada: ${action.nome} dentro de ${action.pasta_pai}`);
+        results.push({ ok: true, tipo: 'subpasta', nome: action.nome, pai: action.pasta_pai });
+
+      } else {
+        console.log(`[!] Ação desconhecida: ${action.tipo}`);
+      }
+    } catch (err) {
+      console.error(`[!] Erro executando ação ${action.tipo}:`, err.message);
+      results.push({ ok: false, tipo: action.tipo, nome: action.nome, erro: err.message });
+    }
+  }
+
+  return results;
 }
 
 async function chat(chatId, userMessage) {
@@ -63,10 +109,31 @@ async function chat(chatId, userMessage) {
     messages: history
   });
 
-  const reply = response.content[0].text;
-  await addToHistory(chatId, 'assistant', reply);
+  const rawReply = response.content[0].text;
+  const { cleanText, actions } = extractActions(rawReply);
 
-  return reply;
+  // Executar ações operacionais (criar pasta, subpasta, etc)
+  let actionResults = [];
+  if (actions.length > 0) {
+    console.log(`[+] Chat: ${actions.length} ação(ões) detectada(s)`);
+    actionResults = await executeActions(actions);
+  }
+
+  // Salvar a resposta limpa no histórico
+  await addToHistory(chatId, 'assistant', cleanText);
+
+  // Adicionar links das pastas criadas na resposta
+  let finalReply = cleanText;
+  for (const r of actionResults) {
+    if (r.ok && r.link) {
+      finalReply += `\n🔗 [Abrir pasta "${r.nome}" no Drive](${r.link})`;
+    }
+    if (!r.ok) {
+      finalReply += `\n❌ Erro ao ${r.tipo}: ${r.erro}`;
+    }
+  }
+
+  return finalReply;
 }
 
 module.exports = { chat, initChat };
