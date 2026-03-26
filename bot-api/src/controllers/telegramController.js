@@ -7,6 +7,7 @@ const { getOrCreateClientFolder, uploadFile } = require('../services/googleDrive
 const { upsertClient } = require('../services/googleSheetsService');
 const { findCliente, createCliente, updateCliente, getNextFileNumber, findClientesSimilares } = require('../services/clienteService');
 const { getUser, registerUser, getPendingUsers } = require('../services/userService');
+const { chat } = require('../services/chatService');
 
 const greetingPath = path.join(__dirname, '../../../prompts/greeting_start.txt');
 const GREETING = fs.existsSync(greetingPath)
@@ -419,7 +420,15 @@ function createProcessor(pool) {
                         });
                     }
                 } else {
-                    await sendMessage(chatId, "📎 Envie um documento em formato de *Imagem* ou *PDF* para processá-lo.\n\n📦 Pode enviar até *10 de uma vez* — eu processo todos juntos!");
+                    // Chat inteligente com Claude
+                    try {
+                        await axios.post(`${TELEGRAM_API}/sendChatAction`, { chat_id: chatId, action: 'typing' });
+                        const reply = await chat(chatId, text);
+                        await sendMessage(chatId, reply);
+                    } catch (err) {
+                        console.error('[!] Erro chat Claude:', err.message);
+                        await sendMessage(chatId, "📎 Envie um documento em formato de *Imagem* ou *PDF* para processá-lo.\n\n📦 Pode enviar até *10 de uma vez* — eu processo todos juntos!");
+                    }
                 }
             }
 
