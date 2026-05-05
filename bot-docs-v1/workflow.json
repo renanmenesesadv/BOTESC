@@ -1,0 +1,430 @@
+{
+  "name": "Bot Docs - Captura Simples v1",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["message"],
+        "additionalFields": {}
+      },
+      "id": "01-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 400]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const TELEGRAM_AUTORIZADO = '319858355';\nconst DRIVE_ROOT_ID = '1tIhxnR8PU-GbR0HClnwGydMcqd6zu5sl';\n\nconst msg = $input.first().json.message || $input.first().json;\nconst fromId = String(msg.from?.id || '');\nconst chatId = msg.chat?.id;\nconst caption = (msg.caption || '').trim();\n\nlet fileId = '';\nlet fileName = '';\n\nif (msg.document) {\n  fileId = msg.document.file_id;\n  fileName = msg.document.file_name || ('arquivo_' + Date.now());\n} else if (msg.photo && msg.photo.length) {\n  fileId = msg.photo[msg.photo.length - 1].file_id;\n  fileName = 'foto_' + Date.now() + '.jpg';\n}\n\nconst idx = caption.indexOf(' - ');\nconst cliente = idx > -1 ? caption.substring(0, idx).trim() : '';\nconst categoria = idx > -1 ? caption.substring(idx + 3).trim() : '';\n\nconst sanitize = (s) => (s || '').replace(/[\\/\\\\<>:\"|?*]/g, '_').trim();\nconst clienteSafe = sanitize(cliente);\nconst categoriaSafe = sanitize(categoria);\n\nlet valido = true;\nlet mensagem_erro = '';\n\nif (fromId !== TELEGRAM_AUTORIZADO) {\n  valido = false;\n  mensagem_erro = 'Acesso nao autorizado.\\nSeu ID: ' + fromId;\n} else if (!fileId) {\n  valido = false;\n  mensagem_erro = 'Envie um arquivo (PDF ou foto) com a legenda no formato:\\n\\nCliente - Categoria\\n\\nExemplo: Dona Maria - Medicamentos';\n} else if (!clienteSafe || !categoriaSafe) {\n  valido = false;\n  mensagem_erro = 'Legenda invalida. Use o formato:\\n\\nCliente - Categoria\\n\\nExemplo: Dona Maria - Medicamentos';\n}\n\nreturn [{\n  json: {\n    valido,\n    mensagem_erro,\n    chat_id: chatId,\n    file_id: fileId,\n    file_name: fileName,\n    cliente: clienteSafe,\n    categoria: categoriaSafe,\n    drive_root_id: DRIVE_ROOT_ID\n  }\n}];"
+      },
+      "id": "02-parsear",
+      "name": "Parsear & Validar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-valido",
+              "leftValue": "={{ $json.valido }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "03-if-valido",
+      "name": "Eh Valido?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.mensagem_erro }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "04-erro",
+      "name": "Telegram Erro",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [900, 600]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "get",
+        "fileId": "={{ $json.file_id }}",
+        "download": true
+      },
+      "id": "05-baixar",
+      "name": "Baixar Arquivo",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "operation": "search",
+        "authentication": "serviceAccount",
+        "searchMethod": "name",
+        "queryString": "={{ $('Parsear & Validar').item.json.cliente }}",
+        "returnAll": false,
+        "limit": 5,
+        "filter": {
+          "driveId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "My Drive"
+          },
+          "folderId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "={{ $('Parsear & Validar').item.json.drive_root_id }}"
+          },
+          "whatToSearch": "folders"
+        }
+      },
+      "id": "06-buscar-cliente",
+      "name": "Buscar Pasta Cliente",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1120, 400],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const items = $input.all();\nconst ctx = $('Parsear & Validar').first().json;\nconst encontrado = items.length > 0 && items[0].json && items[0].json.id;\n\nreturn [{\n  json: {\n    ...ctx,\n    cliente_existe: !!encontrado,\n    cliente_folder_id: encontrado ? items[0].json.id : null\n  },\n  binary: $('Baixar Arquivo').first().binary || {}\n}];"
+      },
+      "id": "07-decide-cliente",
+      "name": "Cliente Existe?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-cli",
+              "leftValue": "={{ $json.cliente_existe }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "08-if-cliente",
+      "name": "Cliente Achou?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [1560, 400]
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "operation": "create",
+        "authentication": "serviceAccount",
+        "name": "={{ $json.cliente }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.drive_root_id }}"
+        },
+        "options": {}
+      },
+      "id": "09-criar-cliente",
+      "name": "Criar Pasta Cliente",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1780, 250]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const novaPasta = $input.first().json;\nconst ctx = $('Parsear & Validar').first().json;\n\nreturn [{\n  json: {\n    ...ctx,\n    cliente_existe: false,\n    cliente_folder_id: novaPasta.id\n  },\n  binary: $('Baixar Arquivo').first().binary || {}\n}];"
+      },
+      "id": "10-pega-id-cli",
+      "name": "ID Cliente Novo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 250]
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "operation": "search",
+        "authentication": "serviceAccount",
+        "searchMethod": "name",
+        "queryString": "={{ $json.categoria }}",
+        "returnAll": false,
+        "limit": 5,
+        "filter": {
+          "driveId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "My Drive"
+          },
+          "folderId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "={{ $json.cliente_folder_id }}"
+          },
+          "whatToSearch": "folders"
+        }
+      },
+      "id": "11-buscar-cat",
+      "name": "Buscar Pasta Categoria",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [2220, 400],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const items = $input.all();\nconst ctx = $input.first().json;\nconst encontrado = items.length > 0 && items[0].json && items[0].json.id;\n\nreturn [{\n  json: {\n    ...ctx,\n    categoria_existe: !!encontrado,\n    categoria_folder_id: encontrado ? items[0].json.id : null\n  },\n  binary: $('Baixar Arquivo').first().binary || {}\n}];"
+      },
+      "id": "12-decide-cat",
+      "name": "Categoria Existe?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2440, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-cat",
+              "leftValue": "={{ $json.categoria_existe }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "13-if-cat",
+      "name": "Categoria Achou?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [2660, 400]
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "operation": "create",
+        "authentication": "serviceAccount",
+        "name": "={{ $json.categoria }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.cliente_folder_id }}"
+        },
+        "options": {}
+      },
+      "id": "14-criar-cat",
+      "name": "Criar Pasta Categoria",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [2880, 250]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const novaPasta = $input.first().json;\nconst ctx = $('Categoria Existe?').first().json;\n\nreturn [{\n  json: {\n    ...ctx,\n    categoria_existe: false,\n    categoria_folder_id: novaPasta.id\n  },\n  binary: $('Baixar Arquivo').first().binary || {}\n}];"
+      },
+      "id": "15-pega-id-cat",
+      "name": "ID Categoria Nova",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3100, 250]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "upload",
+        "authentication": "serviceAccount",
+        "inputDataFieldName": "data",
+        "name": "={{ $json.file_name }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.categoria_folder_id }}"
+        },
+        "options": {}
+      },
+      "id": "16-upload",
+      "name": "Upload Arquivo",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [3320, 400]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Parsear & Validar').item.json.chat_id }}",
+        "text": "=Arquivo salvo!\n\nCliente: {{ $('Parsear & Validar').item.json.cliente }}\nPasta: {{ $('Parsear & Validar').item.json.categoria }}\nArquivo: {{ $('Parsear & Validar').item.json.file_name }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "17-telegram-ok",
+      "name": "Telegram OK",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [3540, 400]
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [{"node": "Parsear & Validar", "type": "main", "index": 0}]
+      ]
+    },
+    "Parsear & Validar": {
+      "main": [
+        [{"node": "Eh Valido?", "type": "main", "index": 0}]
+      ]
+    },
+    "Eh Valido?": {
+      "main": [
+        [{"node": "Baixar Arquivo", "type": "main", "index": 0}],
+        [{"node": "Telegram Erro", "type": "main", "index": 0}]
+      ]
+    },
+    "Baixar Arquivo": {
+      "main": [
+        [{"node": "Buscar Pasta Cliente", "type": "main", "index": 0}]
+      ]
+    },
+    "Buscar Pasta Cliente": {
+      "main": [
+        [{"node": "Cliente Existe?", "type": "main", "index": 0}]
+      ]
+    },
+    "Cliente Existe?": {
+      "main": [
+        [{"node": "Cliente Achou?", "type": "main", "index": 0}]
+      ]
+    },
+    "Cliente Achou?": {
+      "main": [
+        [{"node": "Buscar Pasta Categoria", "type": "main", "index": 0}],
+        [{"node": "Criar Pasta Cliente", "type": "main", "index": 0}]
+      ]
+    },
+    "Criar Pasta Cliente": {
+      "main": [
+        [{"node": "ID Cliente Novo", "type": "main", "index": 0}]
+      ]
+    },
+    "ID Cliente Novo": {
+      "main": [
+        [{"node": "Buscar Pasta Categoria", "type": "main", "index": 0}]
+      ]
+    },
+    "Buscar Pasta Categoria": {
+      "main": [
+        [{"node": "Categoria Existe?", "type": "main", "index": 0}]
+      ]
+    },
+    "Categoria Existe?": {
+      "main": [
+        [{"node": "Categoria Achou?", "type": "main", "index": 0}]
+      ]
+    },
+    "Categoria Achou?": {
+      "main": [
+        [{"node": "Upload Arquivo", "type": "main", "index": 0}],
+        [{"node": "Criar Pasta Categoria", "type": "main", "index": 0}]
+      ]
+    },
+    "Criar Pasta Categoria": {
+      "main": [
+        [{"node": "ID Categoria Nova", "type": "main", "index": 0}]
+      ]
+    },
+    "ID Categoria Nova": {
+      "main": [
+        [{"node": "Upload Arquivo", "type": "main", "index": 0}]
+      ]
+    },
+    "Upload Arquivo": {
+      "main": [
+        [{"node": "Telegram OK", "type": "main", "index": 0}]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}

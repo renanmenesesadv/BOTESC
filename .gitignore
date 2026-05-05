@@ -1,4 +1,46 @@
-node_modules/
-.env
+# Sistema operacional
 .DS_Store
+Thumbs.db
+
+# Configuracao local do Claude Code (contem permissoes/comandos com tokens)
+.claude/
+
+# Skills locais do Claude Code (instalacao pessoal, nao do projeto)
+.agents/
+
+# Projeto antigo (bot classificador) - mantido localmente como referencia
+BOTESC/
+
+# Variaveis de ambiente e segredos
+.env
+.env.*
+!.env.example
+
+# Credenciais Google
+**/google_credentials.json
+**/service_account.json
+**/credentials*.json
+
+# Chaves
+*.key
+*.pem
+*.p12
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Logs
 *.log
+data/logs/*.log
+data/temp/*
+
+# Node
+node_modules/
+
+# IDEs
+.vscode/
+.idea/
